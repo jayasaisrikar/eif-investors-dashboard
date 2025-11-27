@@ -1,0 +1,373 @@
+
+You are GPT-5-mini running inside GitHub Copilot / Copilot Workspace.
+Act as a senior staff full‑stack engineer and product architect.
+Your goal is to DESIGN AND IMPLEMENT a production‑grade investor portal
+for Energy Investors Forum, deployed at: https://investors.energyinvestorsforum.com
+
+==============================
+0. HIGH‑LEVEL PRODUCT SUMMARY
+==============================
+Build a multi-tenant investor–company matchmaking and meeting-scheduling portal
+for Energy Investors Forum (EIF).
+
+There are THREE main actor types:
+1) Investors
+2) Companies (startups / energy firms)
+3) Admins (EIF staff)
+
+Core idea:
+- Investors and Companies can register, create rich profiles, discover each other,
+  send / receive meeting requests, manage upcoming meetings, and keep track of
+  past meetings and follow-ups.
+- The portal must be engineered to support thousands of concurrent users, with
+  robust auth, rate limiting, and scalable database design.
+- In the future, EIF ticket buyers (Mid Level Access / investor tickets) will be
+  redirected here after purchasing a ticket on the main WordPress EIF site.
+
+Tech stack constraints (hard requirements):
+- Frontend: Next.js (latest, app router) + TypeScript
+- Styling: Tailwind CSS
+- UI components: shadcn/ui
+- Animations: Framer Motion
+- Visual flair: parallax / dynamic background effects on the public marketing pages
+- Backend: Next.js API Route Handlers (REST-style) with TypeScript
+- Database: PostgreSQL (via Prisma ORM)
+- Auth: NextAuth (or Auth.js) with email/password + OAuth slots for later
+- State management: React server components + client components as needed
+- Forms: React Hook Form + Zod validation
+- Testing: basic unit tests and integration tests with vitest / jest and Playwright
+- Linting/formatting: ESLint + Prettier
+- Deployment-ready, but keep environment-agnostic (Vercel, Render, etc.)
+
+Theme:
+- Dark theme, aligned with EIF:
+  - Background: #101010
+  - Primary accent: #883FF9
+  - Secondary accent: #EC167F
+  - Text: #FFFFFF and #AAAAAA
+- Keep sharp edges on cards (no large rounded corners), but can use subtle rounding
+  (2-4px) where appropriate.
+- Overall vibe: clean, modern, fintech / investment SaaS.
+
+======================================
+1. CORE FEATURES & PRODUCT REQUIREMENTS
+======================================
+
+1.1 Authentication & Authorization
+----------------------------------
+- Implement email/password registration and login using NextAuth/Auth.js credentials
+  provider.
+- Implement secure password hashing (bcrypt or argon2).
+- Email verification flow:
+  - On registration, mark user as unverified.
+  - Generate and store a verification token with expiry.
+  - Provide an API endpoint + page for verifying the email via token.
+  - Until verified, restrict access to critical features (e.g., scheduling).
+- Password reset:
+  - Request-reset endpoint (email-based token).
+  - Reset password page with token validation.
+- Roles:
+  - "INVESTOR"
+  - "COMPANY"
+  - "ADMIN"
+- Role-based access control (RBAC):
+  - Investors see investor dashboard and features.
+  - Companies see company dashboard and features.
+  - Admins see admin dashboard (user management, moderation, analytics).
+- Make sure user sessions are strictly typed on the server using NextAuth’s callbacks.
+
+1.2 User Profiles
+-----------------
+Implement separate but related profile types for Investors and Companies.
+
+Investor profile fields (examples):
+- Name, profile photo, short bio
+- Firm name and role (e.g., Partner, Analyst)
+- Investment focus:
+  - Sectors (e.g., renewables, oil & gas, grid, storage)
+  - Stage (Seed, Series A, Growth, etc.)
+  - Check size range
+  - Geography preferences
+- Links: LinkedIn, website, X/Twitter
+- Availability preferences (time windows, days of week, timezone)
+
+Company profile fields (examples):
+- Company name, logo, tagline
+- Description, elevator pitch
+- Sector, business model
+- Stage, revenue band, capital sought
+- Headline metrics (optional)
+- Geography / HQ
+- Links: site, pitch deck link (URL), LinkedIn, etc.
+- Preferred investor types
+
+Admin:
+- Can see all users and profiles.
+- Can soft-delete / deactivate accounts.
+- Can flag or approve profiles (basic moderation).
+
+1.3 Matching & Discovery
+------------------------
+Phase 1: simple filters (no complex ML needed).
+- Investor dashboard:
+  - Search and filter companies by sector, stage, geography, capital needed.
+  - Paginated results with key info and "View Profile" + "Request Meeting".
+- Company dashboard:
+  - Search and filter investors by sector focus, stage focus, check size,
+    geography.
+- Save favorites / watchlist:
+  - Investors can bookmark companies.
+  - Companies can bookmark investors.
+
+1.4 Meeting Requests & Scheduling
+---------------------------------
+This is the core interaction.
+
+- MeetingRequest model:
+  - id, createdAt, updatedAt
+  - fromUserId, toUserId
+  - fromRole, toRole
+  - status: PENDING, ACCEPTED, DECLINED, CANCELLED
+  - optional: message / context from requester
+- TimeProposal model:
+  - id, meetingRequestId (FK)
+  - proposedByUserId
+  - startTime (UTC)
+  - endTime (UTC)
+  - timezone
+  - status: PENDING, ACCEPTED, REJECTED
+- Workflow:
+  - Investor (or company) clicks "Request Meeting" on another profile.
+  - They write a short note and optionally propose 1–3 time slots.
+  - The recipient can:
+    - Accept one of the proposed slots → meeting locked.
+    - Propose new time slots.
+    - Decline.
+  - Once a time is accepted:
+    - Meeting state becomes CONFIRMED.
+    - Show in both parties’ dashboards under Upcoming Meetings.
+
+- Meeting model (confirmed):
+  - id
+  - participantAId, participantBId
+  - startTime (UTC), endTime (UTC), timezone
+  - locationType: VIRTUAL | IN_PERSON | TBA
+  - locationUrl (for virtual, e.g., Zoom/Meet link placeholder)
+  - notes
+  - status: CONFIRMED, COMPLETED, CANCELLED
+
+- Views:
+  - “Meeting Inbox” for requests and responses.
+  - “Upcoming Meetings” list + basic calendar-style view.
+  - “Past Meetings” with notes/follow-ups.
+
+1.5 Notifications (Phase 1 basic)
+---------------------------------
+Implement in-app notifications table and UI; email hooks can be stubbed
+(or implemented via generic SMTP/Ethereal placeholder).
+
+Notification model:
+- id, userId, type, data (JSON), isRead, createdAt.
+
+Types examples:
+- MEETING_REQUEST_RECEIVED
+- MEETING_REQUEST_ACCEPTED
+- MEETING_REQUEST_DECLINED
+- NEW_TIME_PROPOSAL
+- MEETING_REMINDER_24H
+
+- Show in-app bell icon with unread count; slide-out panel with list.
+- Provide minimal API to mark notifications as read.
+
+1.6 Admin Console
+-----------------
+Admin dashboard (protected by role ADMIN):
+- List/search users (by email, name, role).
+- View profile summary (Investor or Company).
+- Deactivate / reactivate accounts.
+- See aggregated stats (number of meetings requested, accepted, etc.).
+- Basic list of reports if you implement a “Report user” later (optional for now).
+
+=====================
+2. NON-FUNCTIONAL REQS
+=====================
+
+2.1 Performance & Scalability
+-----------------------------
+- Use PostgreSQL with proper indexes on:
+  - users.email, users.role
+  - meetingRequests.toUserId, fromUserId, status
+  - meetings.participantAId, participantBId, startTime
+- Paginate all list views (profiles, meetings, etc.) using cursor or offset.
+- API responses must be JSON, typed via TypeScript interfaces / Zod schemas.
+
+2.2 Security
+------------
+- Use prepared statements via Prisma (default).
+- Validate all input with Zod on API endpoints and forms.
+- Enforce RBAC on server (API layer), not just in UI.
+- Only logged-in users may access dashboards and scheduling.
+- Protect against basic OWASP issues (XSS via React, CSRF handled by NextAuth,
+  no sensitive data in JWT, etc.).
+
+2.3 Code Quality
+----------------
+- Use TypeScript everywhere (no `any`).
+- Configure ESLint + Prettier.
+
+================
+3. UI/UX & MOTION
+================
+
+3.1 Overall Design
+------------------
+- Dark SaaS-style interface.
+- Main layout: sidebar for navigation on desktop, top nav on mobile.
+- Use shadcn/ui components for:
+  - Buttons, inputs, dialogs, dropdowns, tabs, cards, table, avatar, badge, toast.
+- Use EIF color palette:
+  - Background: #101010
+  - Primary: #883FF9
+  - Accent: #EC167F
+  - Text: #FFFFFF, #AAAAAA
+
+3.2 Landing / Marketing Pages
+-----------------------------
+- Public landing page at `/` for the investor portal:
+  - Hero section with large headline, subtext, and CTA: “Join as Investor”
+    and “Join as Company”.
+  - Use Framer Motion for hero animations (fade in, slide up, staggered cards).
+  - Dynamic parallax background:
+    - Multiple layered gradients or SVG blobs moving at different speeds.
+    - Could use `framer-motion` + `useScroll` + `useTransform` to animate
+      background elements on scroll.
+  - Sections:
+    - “For Investors” (benefits)
+    - “For Companies” (benefits)
+    - “How it works” steps
+    - “Backed by Energy Investors Forum” short blurb.
+
+3.3 Dashboards
+--------------
+- Investor dashboard:
+  - Stats overview: number of meetings requested, upcoming meetings, saved companies.
+  - “Suggested Companies” section (simple filter-based suggestions).
+  - “Upcoming Meetings” section.
+  - Quick links: Edit Profile, Discover Companies, Meeting Inbox.
+- Company dashboard:
+  - Similar structure tailored to companies.
+- Admin dashboard:
+  - Simple with tables (Users, Meetings, etc.).
+
+3.4 Micro-interactions
+----------------------
+- Use Framer Motion for:
+  - Hover effects on cards (small scale/brightness changes).
+  - Smooth modals and dropdowns.
+  - Page transitions (fade/slide between major views).
+
+========================
+4. ARCHITECTURE & SETUP
+========================
+
+4.1 Next.js & Code Structure
+----------------------------
+Use the App Router (`app/` directory). Suggested structure:
+
+- app/
+  - layout.tsx
+  - page.tsx              (public landing)
+  - auth/
+    - login/
+    - register/
+    - verify/
+    - reset-password/
+  - dashboard/
+    - investor/
+    - company/
+    - admin/
+  - meetings/
+    - [id]/
+  - api/
+    - auth/
+      - [...nextauth]/route.ts
+    - profiles/
+      - investor/route.ts
+      - company/route.ts
+    - meetings/
+      - requests/route.ts
+      - proposals/route.ts
+      - confirmed/route.ts
+    - notifications/route.ts
+
+- components/
+  - ui/ (shadcn-generated components)
+  - layouts/
+  - dashboard/
+  - meetings/
+  - forms/
+  - animations/
+
+- lib/
+  - auth.ts
+  - prisma.ts
+  - validation/
+  - utils/
+
+- prisma/
+  - schema.prisma
+
+4.2 Prisma Schema (Outline)
+---------------------------
+Implement a full Prisma schema with at least:
+
+- User
+  - id, name, email (unique), hashedPassword, role, emailVerified, createdAt, updatedAt
+- InvestorProfile (1:1 User)
+  - userId (FK), fields described above
+- CompanyProfile (1:1 User)
+  - userId (FK), fields described above
+- MeetingRequest
+  - id, fromUserId, toUserId, status, message, createdAt, updatedAt
+- TimeProposal
+  - id, meetingRequestId, proposedByUserId, startTime, endTime, timezone, status
+- Meeting
+  - id, participantAId, participantBId, startTime, endTime, timezone, locationType, locationUrl, status, notes
+- Notification
+  - id, userId, type, data (Json), isRead, createdAt
+- Favorites / Watchlist entries (optional but nice)
+
+================================
+5. IMPLEMENTATION INSTRUCTIONS
+================================
+
+You MUST now:
+1) Scaffold the full Next.js + TypeScript project with the above architecture.
+2) Configure Tailwind, shadcn/ui, Framer Motion, ESLint, Prettier.
+3) Create the Prisma schema and migrations for PostgreSQL.
+4) Implement NextAuth/Auth.js with credential-based auth, RBAC and session typing.
+5) Implement all core API endpoints for:
+   - Auth flows (login, register, verify email, reset password).
+   - Profile CRUD for investors and companies.
+   - Meeting requests, time proposals, confirmed meetings.
+   - Notifications read/unread.
+6) Build the main UI pages:
+   - Public landing with parallax, animations, CTAs.
+   - Investor, Company, Admin dashboards.
+   - Profile edit pages.
+   - Meeting Inbox, Upcoming, Past.
+7) Add basic testing (at least a few unit tests and 1–2 integration tests).
+8) Add clear README.md with:
+   - Setup steps
+   - Environment variables (`DATABASE_URL`, `NEXTAUTH_SECRET`, email provider placeholder)
+   - How to run dev, test, build.
+9) Ensure all TypeScript types are sound and there are no blocking ESLint errors.
+
+IMPORTANT:
+- Work incrementally and commit logical chunks.
+- Prefer clarity and maintainability over over-optimization.
+- Use descriptive names and comments where needed.
+- Make sure the app can actually run end-to-end with mocked or simple email flows.
+
+
+I actually wil beusing supabase, so you can remove theunecessary coimplexity with prisma
