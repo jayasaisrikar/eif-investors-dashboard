@@ -5,6 +5,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, MoreHorizontal, Shield, Ban, CheckCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const USERS = [
   { id: 1, name: "GreenTech Ventures", email: "contact@greentech.vc", role: "Investor", status: "Active", joined: "Oct 12, 2024" },
@@ -15,12 +16,13 @@ const USERS = [
 ];
 
 export default function AdminUsers() {
+  const { toast } = useToast();
   return (
     <DashboardLayout role="admin">
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <h1 className="text-3xl font-bold font-heading">User Management</h1>
-          <Button>Export CSV</Button>
+          <Button onClick={() => toast({ title: "Export Started", description: "Downloading users.csv..." })}>Export CSV</Button>
         </div>
 
         <Card className="bg-card/50 border-white/5">

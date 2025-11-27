@@ -26,6 +26,7 @@ import AdminSettings from "@/pages/dashboard/admin/settings";
 
 // Shared
 import SettingsPage from "@/pages/dashboard/settings";
+import ProfilePage from "@/pages/dashboard/profile";
 
 function Router() {
   return (
@@ -52,6 +53,7 @@ function Router() {
 
       {/* Shared Routes */}
       <Route path="/dashboard/settings" component={SettingsPage} />
+      <Route path="/dashboard/profile" component={ProfilePage} />
       
       <Route component={NotFound} />
     </Switch>

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Search, Mail, Linkedin, ExternalLink, MoreHorizontal } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const NETWORK = [
   {
@@ -45,6 +46,7 @@ const NETWORK = [
 ];
 
 export default function InvestorNetwork() {
+  const { toast } = useToast();
   return (
     <DashboardLayout role="investor">
       <div className="space-y-6">
@@ -53,7 +55,7 @@ export default function InvestorNetwork() {
             <h1 className="text-3xl font-bold font-heading">My Network</h1>
             <p className="text-muted-foreground">Manage your connections and contacts.</p>
           </div>
-          <Button>Add Contact</Button>
+          <Button onClick={() => toast({ title: "Invite Sent", description: "Invitation email sent to new contact." })}>Add Contact</Button>
         </div>
 
         {/* Search */}
@@ -83,7 +85,12 @@ export default function InvestorNetwork() {
                 </div>
 
                 <div className="flex gap-2 mb-6">
-                  <Button size="sm" variant="outline" className="flex-1 bg-white/5 border-white/10 hover:bg-white/10">
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    className="flex-1 bg-white/5 border-white/10 hover:bg-white/10"
+                    onClick={() => toast({ title: "Message Sent", description: `Message sent to ${person.name}` })}
+                  >
                     <Mail className="w-4 h-4 mr-2" /> Message
                   </Button>
                   <Button size="icon" variant="outline" className="bg-white/5 border-white/10 hover:bg-white/10">

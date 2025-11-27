@@ -5,8 +5,10 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Upload, FileText, Image as ImageIcon, Save } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function CompanyPitch() {
+  const { toast } = useToast();
   return (
     <DashboardLayout role="company">
       <div className="space-y-8 max-w-4xl mx-auto">
@@ -17,7 +19,10 @@ export default function CompanyPitch() {
           </div>
           <div className="flex gap-2">
             <Button variant="outline">Preview</Button>
-            <Button className="bg-secondary hover:bg-secondary/90">
+            <Button 
+              className="bg-secondary hover:bg-secondary/90"
+              onClick={() => toast({ title: "Pitch Updated", description: "Your company profile has been saved." })}
+            >
               <Save className="w-4 h-4 mr-2" /> Save Changes
             </Button>
           </div>

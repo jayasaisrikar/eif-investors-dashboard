@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Search, Filter, MapPin, DollarSign, Briefcase } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const COMPANIES = [
   {
@@ -76,6 +77,7 @@ const COMPANIES = [
 ];
 
 export default function InvestorDiscover() {
+  const { toast } = useToast();
   return (
     <DashboardLayout role="investor">
       <div className="space-y-6">
@@ -89,7 +91,7 @@ export default function InvestorDiscover() {
               <Filter className="w-4 h-4 mr-2" />
               Advanced Filters
             </Button>
-            <Button>Save Search</Button>
+            <Button onClick={() => toast({ title: "Search Saved", description: "You will be notified of new matches." })}>Save Search</Button>
           </div>
         </div>
 
@@ -168,7 +170,12 @@ export default function InvestorDiscover() {
                 </div>
               </CardContent>
               <CardFooter className="pt-3 border-t border-white/5 flex gap-2">
-                <Button className="flex-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20">Request Meeting</Button>
+                <Button 
+                  className="flex-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20"
+                  onClick={() => toast({ title: "Request Sent", description: `Meeting request sent to ${company.name}` })}
+                >
+                  Request Meeting
+                </Button>
                 <Button variant="ghost" size="icon" className="border border-white/10 text-muted-foreground hover:text-white">
                   <Search className="w-4 h-4" />
                 </Button>

@@ -5,8 +5,10 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Bell, Lock, User, Moon } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 export default function SettingsPage() {
+  const { toast } = useToast();
   return (
     <DashboardLayout role="investor"> {/* Role could be dynamic here, defaulting to investor layout for demo */}
       <div className="space-y-8 max-w-3xl">
@@ -34,7 +36,7 @@ export default function SettingsPage() {
               <Label>Email Address</Label>
               <Input defaultValue="alex@greentech.vc" className="bg-background/50 border-white/10" />
             </div>
-            <Button className="mt-2">Save Profile</Button>
+            <Button className="mt-2" onClick={() => toast({ title: "Profile Saved", description: "Your information has been updated." })}>Save Profile</Button>
           </CardContent>
         </Card>
 
@@ -87,7 +89,7 @@ export default function SettingsPage() {
                 <Label>New Password</Label>
                 <Input type="password" placeholder="••••••••" className="bg-background/50 border-white/10" />
               </div>
-              <Button variant="secondary" className="mt-2">Update Password</Button>
+              <Button variant="secondary" className="mt-2" onClick={() => toast({ title: "Password Updated", description: "Your password has been changed successfully." })}>Update Password</Button>
           </CardContent>
         </Card>
       </div>

@@ -5,6 +5,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Calendar as CalendarIcon, Clock, MapPin, Video, MoreVertical } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 
 const MEETINGS = [
   {
@@ -54,6 +55,7 @@ const MEETINGS = [
 ];
 
 export default function InvestorMeetings() {
+  const { toast } = useToast();
   return (
     <DashboardLayout role="investor">
       <div className="space-y-6">
@@ -62,7 +64,7 @@ export default function InvestorMeetings() {
             <h1 className="text-3xl font-bold font-heading">Meetings</h1>
             <p className="text-muted-foreground">Manage your schedule and upcoming calls.</p>
           </div>
-          <Button>
+          <Button onClick={() => toast({ title: "Calendar Synced", description: "Your Google Calendar is now connected." })}>
             <CalendarIcon className="w-4 h-4 mr-2" />
             Sync Calendar
           </Button>
@@ -117,7 +119,13 @@ export default function InvestorMeetings() {
                       </div>
                     </div>
                     <div className="flex gap-2 ml-auto md:ml-0">
-                      <Button variant="outline" className="border-white/10 hover:bg-white/5">Reschedule</Button>
+                      <Button 
+                        variant="outline" 
+                        className="border-white/10 hover:bg-white/5"
+                        onClick={() => toast({ title: "Reschedule Request", description: "Availability options sent to participant." })}
+                      >
+                        Reschedule
+                      </Button>
                       <Button className="bg-primary hover:bg-primary/90">Join</Button>
                     </div>
                   </div>

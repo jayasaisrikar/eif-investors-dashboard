@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Search, Filter, MapPin, Briefcase, Globe } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const INVESTORS = [
   {
@@ -70,6 +71,7 @@ const INVESTORS = [
 ];
 
 export default function CompanyInvestors() {
+  const { toast } = useToast();
   return (
     <DashboardLayout role="company">
       <div className="space-y-6">
@@ -163,7 +165,12 @@ export default function CompanyInvestors() {
                 </div>
               </CardContent>
               <CardFooter className="pt-3 border-t border-white/5 flex gap-2">
-                <Button className="flex-1 bg-secondary/10 hover:bg-secondary/20 text-secondary border border-secondary/20">Send Pitch</Button>
+                <Button 
+                  className="flex-1 bg-secondary/10 hover:bg-secondary/20 text-secondary border border-secondary/20"
+                  onClick={() => toast({ title: "Pitch Sent", description: `Pitch deck sent to ${investor.name}` })}
+                >
+                  Send Pitch
+                </Button>
                 <Button variant="ghost" size="icon" className="border border-white/10 text-muted-foreground hover:text-white">
                   <Globe className="w-4 h-4" />
                 </Button>
