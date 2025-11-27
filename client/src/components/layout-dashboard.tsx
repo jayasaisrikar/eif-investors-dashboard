@@ -72,7 +72,7 @@ export function DashboardLayout({
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white font-bold">
             E
           </div>
-          <span className="font-bold font-heading text-lg">EIF Portal</span>
+          <span className="font-bold font-heading text-lg">EIF Investor Portal</span>
         </div>
 
         <div className="py-6 px-3 space-y-1">

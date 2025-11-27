@@ -16,7 +16,7 @@ export function MainLayout({ children }: { children: React.ReactNode }) {
               <span className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white">
                 E
               </span>
-              Energy Investors Forum
+              EIF Investor Portal
             </a>
           </Link>
 

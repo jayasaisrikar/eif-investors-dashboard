@@ -6,23 +6,52 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import LandingPage from "@/pages/landing";
 import AuthPage from "@/pages/auth";
+
+// Investor Pages
 import InvestorDashboard from "@/pages/dashboard/investor";
+import InvestorDiscover from "@/pages/dashboard/investor/discover";
+import InvestorMeetings from "@/pages/dashboard/investor/meetings";
+import InvestorNetwork from "@/pages/dashboard/investor/network";
+
+// Company Pages
 import CompanyDashboard from "@/pages/dashboard/company";
+import CompanyInvestors from "@/pages/dashboard/company/investors";
+import CompanyMeetings from "@/pages/dashboard/company/meetings";
+import CompanyPitch from "@/pages/dashboard/company/pitch";
+
+// Admin Pages
 import AdminDashboard from "@/pages/dashboard/admin";
+import AdminUsers from "@/pages/dashboard/admin/users";
+import AdminSettings from "@/pages/dashboard/admin/settings";
+
+// Shared
+import SettingsPage from "@/pages/dashboard/settings";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={LandingPage} />
       <Route path="/auth" component={AuthPage} />
-      <Route path="/dashboard/investor" component={InvestorDashboard} />
-      <Route path="/dashboard/company" component={CompanyDashboard} />
-      <Route path="/dashboard/admin" component={AdminDashboard} />
       
-      {/* Sub-routes (mocked for now to prevent 404s on sidebar clicks) */}
-      <Route path="/dashboard/investor/:any*" component={InvestorDashboard} />
-      <Route path="/dashboard/company/:any*" component={CompanyDashboard} />
-      <Route path="/dashboard/admin/:any*" component={AdminDashboard} />
+      {/* Investor Routes */}
+      <Route path="/dashboard/investor" component={InvestorDashboard} />
+      <Route path="/dashboard/investor/discover" component={InvestorDiscover} />
+      <Route path="/dashboard/investor/meetings" component={InvestorMeetings} />
+      <Route path="/dashboard/investor/network" component={InvestorNetwork} />
+      
+      {/* Company Routes */}
+      <Route path="/dashboard/company" component={CompanyDashboard} />
+      <Route path="/dashboard/company/investors" component={CompanyInvestors} />
+      <Route path="/dashboard/company/meetings" component={CompanyMeetings} />
+      <Route path="/dashboard/company/pitch" component={CompanyPitch} />
+      
+      {/* Admin Routes */}
+      <Route path="/dashboard/admin" component={AdminDashboard} />
+      <Route path="/dashboard/admin/users" component={AdminUsers} />
+      <Route path="/dashboard/admin/settings" component={AdminSettings} />
+
+      {/* Shared Routes */}
+      <Route path="/dashboard/settings" component={SettingsPage} />
       
       <Route component={NotFound} />
     </Switch>
