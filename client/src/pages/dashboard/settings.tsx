@@ -6,11 +6,77 @@ import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Bell, Lock, User, Moon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useEffect, useState } from "react";
+
+interface UserData {
+  id?: string;
+  email?: string;
+  name?: string;
+  role?: string;
+}
 
 export default function SettingsPage() {
   const { toast } = useToast();
+  const [userData, setUserData] = useState<UserData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const res = await fetch('/api/users/me', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setUserData(data);
+          const nameParts = (data.name || "").split(' ');
+          setFirstName(nameParts[0] || "");
+          setLastName(nameParts.slice(1).join(' ') || "");
+          setEmail(data.email || "");
+        }
+      } catch (err) {
+        console.error('fetch error', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const role = userData?.role?.toLowerCase().includes('company') ? 'company' : 'investor';
+
+  const handleSaveProfile = () => {
+    // In a real app, this would call an API to update user info
+    toast({ title: "Profile Saved", description: "Your information has been updated." });
+  };
+
+  const handleUpdatePassword = () => {
+    if (!currentPassword || !newPassword) {
+      toast({ title: "Error", description: "Please fill in both password fields." });
+      return;
+    }
+    // In a real app, this would call an API to update password
+    toast({ title: "Password Updated", description: "Your password has been changed successfully." });
+    setCurrentPassword("");
+    setNewPassword("");
+  };
+
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-96">
+          <p className="text-muted-foreground">Loading settings...</p>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
-    <DashboardLayout role="investor"> {/* Role could be dynamic here, defaulting to investor layout for demo */}
+    <DashboardLayout role={role}>
       <div className="space-y-8 max-w-3xl">
         <h1 className="text-3xl font-bold font-heading">Account Settings</h1>
 
@@ -25,18 +91,31 @@ export default function SettingsPage() {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>First Name</Label>
-                <Input defaultValue="Alex" className="bg-background/50 border-white/10" />
+                <Input 
+                  value={firstName} 
+                  onChange={(e) => setFirstName(e.target.value)} 
+                  className="bg-background/50 border-white/10" 
+                />
               </div>
               <div className="space-y-2">
                 <Label>Last Name</Label>
-                <Input defaultValue="Thompson" className="bg-background/50 border-white/10" />
+                <Input 
+                  value={lastName} 
+                  onChange={(e) => setLastName(e.target.value)} 
+                  className="bg-background/50 border-white/10" 
+                />
               </div>
             </div>
             <div className="space-y-2">
               <Label>Email Address</Label>
-              <Input defaultValue="alex@greentech.vc" className="bg-background/50 border-white/10" />
+              <Input 
+                value={email} 
+                disabled 
+                className="bg-background/50 border-white/10" 
+              />
+              <p className="text-xs text-muted-foreground">Email cannot be changed. Contact support if needed.</p>
             </div>
-            <Button className="mt-2" onClick={() => toast({ title: "Profile Saved", description: "Your information has been updated." })}>Save Profile</Button>
+            <Button className="mt-2" onClick={handleSaveProfile}>Save Profile</Button>
           </CardContent>
         </Card>
 
@@ -66,7 +145,7 @@ export default function SettingsPage() {
              <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <Label className="text-base">New Match Alerts</Label>
-                <p className="text-sm text-muted-foreground">When a new company matches your criteria.</p>
+                <p className="text-sm text-muted-foreground">When a new {role === 'company' ? 'investor' : 'company'} matches your criteria.</p>
               </div>
               <Switch defaultChecked />
             </div>
@@ -83,13 +162,25 @@ export default function SettingsPage() {
           <CardContent className="space-y-4">
              <div className="space-y-2">
                 <Label>Current Password</Label>
-                <Input type="password" placeholder="••••••••" className="bg-background/50 border-white/10" />
+                <Input 
+                  type="password" 
+                  placeholder="••••••••" 
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  className="bg-background/50 border-white/10" 
+                />
               </div>
               <div className="space-y-2">
                 <Label>New Password</Label>
-                <Input type="password" placeholder="••••••••" className="bg-background/50 border-white/10" />
+                <Input 
+                  type="password" 
+                  placeholder="••••••••" 
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="bg-background/50 border-white/10" 
+                />
               </div>
-              <Button variant="secondary" className="mt-2" onClick={() => toast({ title: "Password Updated", description: "Your password has been changed successfully." })}>Update Password</Button>
+              <Button variant="secondary" className="mt-2" onClick={handleUpdatePassword}>Update Password</Button>
           </CardContent>
         </Card>
       </div>

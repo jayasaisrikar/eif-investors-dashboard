@@ -1,38 +1,188 @@
 import { type User, type InsertUser } from "@shared/schema";
-import { randomUUID } from "crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import bcrypt from "bcryptjs";
+import supabaseClient from "./supabase";
+import crypto from "crypto";
 
-// modify the interface with any CRUD methods
-// you might need
+// modify the interface with any CRUD methods you might need
+export interface RegisterUser {
+  username?: string; // legacy
+  email?: string;
+  name?: string;
+  password: string;
+  role?: string;
+}
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createUser(user: RegisterUser): Promise<User>;
+  createPasswordResetToken(userId: string): Promise<{ token: string; expiresAt: string } | null>;
+  validateResetToken(token: string): Promise<{ user_id: string; token: string; expires_at: string } | null>;
+  updateUserPassword(userId: string, newPassword: string): Promise<User | null>;
+  invalidateResetTokens(userId: string): Promise<void>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<string, User>;
+export class SupabaseStorage implements IStorage {
+  client: SupabaseClient;
 
-  constructor() {
-    this.users = new Map();
+  constructor(client: SupabaseClient) {
+    this.client = client;
+  }
+
+  // Map the different table names/columns to the User shape used by the app
+  private mapSupabaseRowToUser(row: any): User | undefined {
+    if (!row || !row.id) return undefined;
+    const user: any = {
+      id: row.id,
+      username: row.username ?? row.email ?? row.name,
+      email: row.email ?? row.username,
+      name: row.name ?? row.username ?? row.email,
+      password: row.password ?? row.hashed_password ?? undefined,
+      role: row.role ?? undefined,
+    };
+    return user as User;
   }
 
   async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+    // Query users_eif table (the only users table we use)
+    const { data, error } = await this.client.from("users_eif").select("*").eq("id", id).maybeSingle();
+    if (!error && data) return this.mapSupabaseRowToUser(data);
+    return undefined;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    // Try email lookup in users_eif (email is the username in our schema)
+    const { data, error } = await this.client.from("users_eif").select("*").eq("email", username).limit(1).maybeSingle();
+    if (!error && data) return this.mapSupabaseRowToUser(data);
+    return undefined;
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
-    return user;
+  async createUser(registerUser: RegisterUser): Promise<User> {
+    // Hash the password
+    const saltRounds = 10;
+    const hashed = await bcrypt.hash(registerUser.password, saltRounds);
+
+    // Insert into `users_eif` with richer fields
+    const userEmail = (registerUser.email ?? registerUser.username ?? "").toLowerCase();
+    const userRole = registerUser.role ?? "user";
+    const userName = registerUser.name ?? registerUser.username;
+
+    // Check for existing email to provide a friendly conflict error
+    if (!userEmail) {
+      throw new Error('email_required');
+    }
+
+    const { data: existingByEmail } = await this.client.from("users_eif").select('id').eq('email', userEmail).limit(1).maybeSingle();
+    if (existingByEmail) {
+      throw new Error('email_exists');
+    }
+
+    let { data, error } = await this.client
+      .from("users_eif")
+      .insert({ email: userEmail, hashed_password: hashed, role: userRole, name: userName })
+      .select("*")
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data) return this.mapSupabaseRowToUser(data)!;
+
+    // Distinguish constraint failures from other DB errors
+    if (error && (error.code === '23505' || (error.message && error.message.includes('duplicate key')))) {
+      throw new Error('email_exists');
+    }
+
+    throw new Error(`failed to insert user: ${error?.message ?? "unknown"}`);
+  }
+
+  async createPasswordResetToken(userId: string): Promise<{ token: string; expiresAt: string } | null> {
+    // Generate secure token
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24); // 24-hour expiration
+    const { data, error } = await this.client
+      .from("password_resets_eif")
+      .insert({
+        user_id: userId,
+        token,
+        expires_at: expiresAt.toISOString(),
+        created_at: new Date().toISOString(),
+      })
+      .select("token, expires_at")
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Failed to create reset token:', error);
+      return null;
+    }
+
+    return {
+      token: data?.token ?? token,
+      expiresAt: data?.expires_at ?? expiresAt.toISOString(),
+    };
+  }
+
+  async validateResetToken(token: string): Promise<{ user_id: string; token: string; expires_at: string } | null> {
+    const { data, error } = await this.client
+      .from("password_resets_eif")
+      .select("user_id, token, expires_at")
+      .eq("token", token)
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      return null;
+    }
+
+    // Check if token has expired
+    const expiresAt = new Date(data.expires_at);
+    if (expiresAt < new Date()) {
+      // Remove expired token
+      await this.client
+        .from("password_resets_eif")
+        .delete()
+        .eq("token", token);
+      return null;
+    }
+
+    return {
+      user_id: data.user_id,
+      token: data.token,
+      expires_at: data.expires_at,
+    };
+  }
+
+  async updateUserPassword(userId: string, newPassword: string): Promise<User | null> {
+    // Hash the new password
+    const saltRounds = 10;
+    const hashed = await bcrypt.hash(newPassword, saltRounds);
+
+    const { data, error } = await this.client
+      .from("users_eif")
+      .update({ hashed_password: hashed, updated_at: new Date().toISOString() })
+      .eq("id", userId)
+      .select("*")
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) {
+      console.error('Failed to update password:', error);
+      return null;
+    }
+
+    return this.mapSupabaseRowToUser(data) ?? null;
+  }
+
+  async invalidateResetTokens(userId: string): Promise<void> {
+    // Remove any outstanding reset tokens for the user (schema doesn't include `used` flag)
+    await this.client
+      .from("password_resets_eif")
+      .delete()
+      .eq("user_id", userId);
   }
 }
 
-export const storage = new MemStorage();
+// Always use Supabase storage in this project. `supabaseClient` is created
+// at import time and will throw a clear error if required env vars are missing.
+export const storage: IStorage = new SupabaseStorage(supabaseClient as SupabaseClient);

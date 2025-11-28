@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -81,18 +82,32 @@ app.use((req, res, next) => {
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
-  // Other ports are firewalled. Default to 5000 if not specified.
-  // this serves both the API and the client.
-  // It is the only port that is not firewalled.
+  // Default to 5000 if not specified. Allow HOST config via environment variable
+  // and make `reusePort` conditional based on platform because Windows doesn't
+  // support SO_REUSEPORT and will cause an ENOTSUP error on listen.
   const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
+  const host = process.env.HOST ?? (process.platform === "win32" ? "127.0.0.1" : "0.0.0.0");
+
+  const listenOptions: any = { port, host };
+  if (process.platform !== "win32") {
+    // `reusePort` gives better scalability for clustering on platforms that support it.
+    listenOptions.reusePort = true;
+  }
+
+  // Add an error handler so the server emits a friendly message and exits cleanly.
+  httpServer.on("error", (err: any) => {
+    // Log the error with a readable prefix and suggest a fix for ENOTSUP.
+    log(`server error: ${err.message}`, "server");
+    if (err && err.code === "ENOTSUP") {
+      log("Detected ENOTSUP - possibly unsupported socket options on this platform.", "server");
+      if (process.platform === "win32") {
+        log("On Windows, SO_REUSEPORT is not supported. Consider setting HOST to 127.0.0.1 or removing reusePort.", "server");
+      }
+    }
+    process.exit(1);
+  });
+
+  httpServer.listen(listenOptions, () => {
+    log(`serving on ${host}:${port}`);
+  });
 })();

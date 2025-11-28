@@ -3,39 +3,61 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Calendar as CalendarIcon, Clock, MapPin, Video } from "lucide-react";
+import { Calendar as CalendarIcon, Clock, MapPin, Video, AlertCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useEffect, useState } from "react";
 
-const MEETINGS = [
-  {
-    id: 1,
-    title: "Intro Call: Green Horizon",
-    partner: "Alice Wong (Partner)",
-    firm: "Green Horizon Ventures",
-    time: "10:00 AM - 10:30 AM",
-    date: "Today, Nov 27",
-    type: "Virtual",
-    status: "Confirmed",
-    link: "zoom.us/j/123456",
-    location: "Zoom"
-  },
-  {
-    id: 2,
-    title: "Follow-up: ECP",
-    partner: "Robert Miller (Associate)",
-    firm: "Energy Capital Partners",
-    time: "2:00 PM - 3:00 PM",
-    date: "Today, Nov 27",
-    type: "Virtual",
-    status: "Confirmed",
-    link: "meet.google.com/abc-defg",
-    location: "Google Meet"
-  }
-];
+interface MeetingRequest {
+  id: string;
+  from_user_id: string;
+  to_user_id: string;
+  from_role: string;
+  to_role: string;
+  message?: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export default function CompanyMeetings() {
   const { toast } = useToast();
+  const [meetings, setMeetings] = useState<MeetingRequest[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchMeetings = async () => {
+      try {
+        // Get current user to get their ID
+        const userRes = await fetch('/api/users/me', { credentials: 'include' });
+        if (!userRes.ok) throw new Error('Could not get current user');
+        const user = await userRes.json();
+
+        // Get meeting requests for this user
+        const meRes = await fetch(`/api/meetings/requests/${user.id}`, { credentials: 'include' });
+        if (!meRes.ok) throw new Error('Could not fetch meetings');
+        const data = await meRes.json();
+        setMeetings(data || []);
+      } catch (err: any) {
+        console.error('fetch meetings error', err);
+        setError(err?.message || 'Failed to load meetings');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMeetings();
+  }, []);
+
+  const upcomingMeetings = meetings.filter(m => m.status === 'CONFIRMED');
+  const pendingMeetings = meetings.filter(m => m.status === 'PENDING');
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
+  };
+
   return (
     <DashboardLayout role="company">
       <div className="space-y-6">
@@ -53,83 +75,99 @@ export default function CompanyMeetings() {
           </Button>
         </div>
 
+        {error && (
+          <Card className="bg-destructive/10 border-destructive/20">
+            <CardContent className="p-4 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+              <p className="text-sm text-destructive">{error}</p>
+            </CardContent>
+          </Card>
+        )}
+
         <Tabs defaultValue="upcoming" className="w-full">
           <TabsList className="w-full md:w-auto bg-card/50 border border-white/5 p-1">
-            <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
-            <TabsTrigger value="requests">Requests (3)</TabsTrigger>
-            <TabsTrigger value="past">Past</TabsTrigger>
+            <TabsTrigger value="upcoming">Upcoming ({upcomingMeetings.length})</TabsTrigger>
+            <TabsTrigger value="requests">Requests ({pendingMeetings.length})</TabsTrigger>
           </TabsList>
 
           <TabsContent value="upcoming" className="mt-6 space-y-4">
-            {MEETINGS.map((meeting) => (
-              <Card key={meeting.id} className="bg-card/50 border-white/5 hover:bg-white/[0.02] transition-colors">
-                <CardContent className="p-6 flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
-                  <div className="flex items-start gap-4">
-                    <div className="flex flex-col items-center justify-center w-16 h-16 rounded-lg bg-secondary/10 text-secondary border border-secondary/20 shrink-0">
-                      <span className="text-xs font-medium uppercase">{meeting.date.split(',')[0]}</span>
-                      <span className="text-xl font-bold">{meeting.date.split(' ')[2]}</span>
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <h3 className="font-bold text-lg">{meeting.title}</h3>
-                        <Badge variant="outline" className={`
-                          ${meeting.status === 'Confirmed' ? 'text-green-500 border-green-500/20 bg-green-500/10' : 'text-yellow-500 border-yellow-500/20 bg-yellow-500/10'}
-                        `}>
-                          {meeting.status}
-                        </Badge>
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading meetings...</p>
+            ) : upcomingMeetings.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">No upcoming meetings scheduled.</div>
+            ) : (
+              upcomingMeetings.map((meeting) => (
+                <Card key={meeting.id} className="bg-card/50 border-white/5 hover:bg-white/[0.02] transition-colors">
+                  <CardContent className="p-6 flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
+                    <div className="flex items-start gap-4">
+                      <div className="flex flex-col items-center justify-center w-16 h-16 rounded-lg bg-secondary/10 text-secondary border border-secondary/20 shrink-0">
+                        <span className="text-xs font-medium uppercase">{formatDate(meeting.created_at).split(' ')[0]}</span>
+                        <span className="text-xl font-bold">{formatDate(meeting.created_at).split(' ')[1]}</span>
                       </div>
-                      <div className="flex flex-col gap-1 text-sm text-muted-foreground">
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4" /> {meeting.time}
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <h3 className="font-bold text-lg">Scheduled Meeting</h3>
+                          <Badge variant="outline" className="text-green-500 border-green-500/20 bg-green-500/10">
+                            {meeting.status}
+                          </Badge>
                         </div>
-                        <div className="flex items-center gap-2">
-                          {meeting.type === 'Virtual' ? <Video className="w-4 h-4" /> : <MapPin className="w-4 h-4" />}
-                          {meeting.type === 'Virtual' ? 'Virtual Meeting' : meeting.location}
+                        <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+                          <p>{meeting.message || "Investor meeting"}</p>
+                          <div className="flex items-center gap-2">
+                            <Video className="w-4 h-4" /> Video Meeting
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center gap-4 w-full md:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-white/5">
-                     <div className="flex items-center gap-3 mr-4">
-                      <Avatar>
-                        <AvatarImage src={`https://api.dicebear.com/7.x/avataaars/svg?seed=${meeting.partner}`} />
-                        <AvatarFallback>{meeting.partner[0]}</AvatarFallback>
-                      </Avatar>
-                      <div className="text-sm">
-                        <div className="font-medium text-foreground">{meeting.partner}</div>
-                        <div className="text-muted-foreground">{meeting.firm}</div>
+                    <div className="flex items-center gap-4 w-full md:w-auto pt-4 md:pt-0 border-t md:border-t-0 border-white/5">
+                      <div className="flex gap-2 ml-auto md:ml-0">
+                        <Button 
+                          variant="outline" 
+                          className="border-white/10 hover:bg-white/5"
+                          onClick={() => toast({ title: "Reschedule Request", description: "Availability options sent to investor." })}
+                        >
+                          Reschedule
+                        </Button>
+                        <Button className="bg-secondary hover:bg-secondary/90 text-white">Join Call</Button>
                       </div>
                     </div>
-                    <div className="flex gap-2 ml-auto md:ml-0">
-                      <Button 
-                        variant="outline" 
-                        className="border-white/10 hover:bg-white/5"
-                        onClick={() => toast({ title: "Reschedule Request", description: "Availability options sent to participant." })}
-                      >
-                        Reschedule
-                      </Button>
-                      <Button className="bg-secondary hover:bg-secondary/90 text-white">Join</Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              ))
+            )}
           </TabsContent>
           
           <TabsContent value="requests">
-             <Card className="bg-card/50 border-white/5 p-8 text-center">
-               <div className="mx-auto w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mb-4">
-                 <CalendarIcon className="w-6 h-6 text-muted-foreground" />
-               </div>
-               <h3 className="text-lg font-medium mb-2">You have 3 pending meeting requests</h3>
-               <p className="text-muted-foreground mb-4">Review them to fill your schedule.</p>
-               <Button variant="outline">Review Requests</Button>
-             </Card>
-          </TabsContent>
-          
-           <TabsContent value="past">
-            <div className="text-center py-12 text-muted-foreground">No past meetings to show.</div>
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading requests...</p>
+            ) : pendingMeetings.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="mx-auto w-12 h-12 bg-white/5 rounded-full flex items-center justify-center mb-4">
+                  <CalendarIcon className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-medium mb-2">No pending requests</h3>
+                <p className="text-muted-foreground">You're all caught up! Check back later for new meeting requests.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {pendingMeetings.map((meeting) => (
+                  <Card key={meeting.id} className="bg-card/50 border-white/5">
+                    <CardContent className="p-6 flex flex-col md:flex-row gap-6 items-start md:items-center justify-between">
+                      <div className="flex-1">
+                        <h3 className="font-bold text-lg mb-2">New Meeting Request from Investor</h3>
+                        <p className="text-sm text-muted-foreground mb-2">{meeting.message || "Wants to discuss an investment opportunity with your company"}</p>
+                        <Badge variant="outline" className="text-yellow-500 border-yellow-500/20 bg-yellow-500/10">NEEDS YOUR RESPONSE</Badge>
+                      </div>
+                      <div className="flex gap-2 ml-auto md:ml-0">
+                        <Button variant="outline" className="border-white/10">Decline</Button>
+                        <Button className="bg-secondary hover:bg-secondary/90">Accept & Schedule</Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </TabsContent>
         </Tabs>
       </div>

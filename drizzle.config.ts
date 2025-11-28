@@ -1,14 +1,5 @@
-import { defineConfig } from "drizzle-kit";
+// Drizzle configuration removed/disabled for this project.
+// This project uses Supabase as the storage backend. If you need Drizzle
+// migrations in the future, recreate this config and set `DATABASE_URL`.
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
-}
-
-export default defineConfig({
-  out: "./migrations",
-  schema: "./shared/schema.ts",
-  dialect: "postgresql",
-  dbCredentials: {
-    url: process.env.DATABASE_URL,
-  },
-});
+export default {};

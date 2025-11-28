@@ -18,6 +18,7 @@ import CompanyDashboard from "@/pages/dashboard/company";
 import CompanyInvestors from "@/pages/dashboard/company/investors";
 import CompanyMeetings from "@/pages/dashboard/company/meetings";
 import CompanyPitch from "@/pages/dashboard/company/pitch";
+import CompanyPublicProfile from "@/pages/company/profile";
 
 // Admin Pages
 import AdminDashboard from "@/pages/dashboard/admin";
@@ -45,6 +46,8 @@ function Router() {
       <Route path="/dashboard/company/investors" component={CompanyInvestors} />
       <Route path="/dashboard/company/meetings" component={CompanyMeetings} />
       <Route path="/dashboard/company/pitch" component={CompanyPitch} />
+      {/* Public company profile (investors) */}
+      <Route path="/company/:userId" component={CompanyPublicProfile} />
       
       {/* Admin Routes */}
       <Route path="/dashboard/admin" component={AdminDashboard} />

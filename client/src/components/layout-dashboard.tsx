@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { 
   LayoutDashboard, 
@@ -26,6 +26,13 @@ import { Input } from "@/components/ui/input";
 
 type Role = "investor" | "company" | "admin";
 
+interface UserData {
+  id?: string;
+  name?: string;
+  email?: string;
+  role?: string;
+}
+
 export function DashboardLayout({ 
   children, 
   role = "investor" 
@@ -35,6 +42,26 @@ export function DashboardLayout({
 }) {
   const [location, setLocation] = useLocation();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [userData, setUserData] = useState<UserData | null>(null);
+  const [loadingUser, setLoadingUser] = useState(true);
+
+  useEffect(() => {
+    const fetchUserData = async () => {
+      try {
+        const res = await fetch('/api/users/me', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setUserData(data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch user data:', err);
+      } finally {
+        setLoadingUser(false);
+      }
+    };
+
+    fetchUserData();
+  }, []);
 
   const navItems = {
     investor: [
@@ -133,15 +160,15 @@ export function DashboardLayout({
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
                   <Avatar className="h-8 w-8">
                     <AvatarImage src="https://github.com/shadcn.png" alt="@user" />
-                    <AvatarFallback>JD</AvatarFallback>
+                    <AvatarFallback>{userData?.name?.substring(0, 2).toUpperCase() || "U"}</AvatarFallback>
                   </Avatar>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-56" align="end" forceMount>
                 <DropdownMenuLabel className="font-normal">
                   <div className="flex flex-col space-y-1">
-                    <p className="text-sm font-medium leading-none">John Doe</p>
-                    <p className="text-xs leading-none text-muted-foreground">john@example.com</p>
+                    <p className="text-sm font-medium leading-none">{userData?.name || "User"}</p>
+                    <p className="text-xs leading-none text-muted-foreground">{userData?.email || "user@example.com"}</p>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -153,7 +180,17 @@ export function DashboardLayout({
                   <DropdownMenuItem className="cursor-pointer">Settings</DropdownMenuItem>
                 </Link>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive" onClick={() => setLocation("/")}>
+                <DropdownMenuItem 
+                  className="text-destructive cursor-pointer" 
+                  onClick={async () => {
+                    try {
+                      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+                    } catch (e) {
+                      // ignore errors, still redirect
+                    }
+                    setLocation("/");
+                  }}
+                >
                   <LogOut className="w-4 h-4 mr-2" />
                   Log out
                 </DropdownMenuItem>
