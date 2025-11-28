@@ -18,7 +18,8 @@
     },
     {
       "src": "/api/(.*)",
-      "dest": "/api/[...server]"
+      "dest": "/api/[...server]",
+      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     },
     {
       "src": "/(.*)",
