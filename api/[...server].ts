@@ -7,7 +7,7 @@ async function getApp() {
   if (!appPromise) {
     appPromise = createApp().catch(err => {
       console.error('Failed to create app:', err);
-      appPromise = null; // reset on error so next request tries again
+      appPromise = null;
       throw err;
     });
   }
@@ -16,15 +16,42 @@ async function getApp() {
 
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
-    console.log(`[API] ${req.method} ${req.url}`);
+    console.log(`[API Handler] ${req.method} ${req.url}`);
     const app = await getApp();
-    // Express apps are callable as (req,res)
-    // @ts-ignore
-    return app(req, res);
+    
+    // Invoke the Express app and wait for the response to be sent
+    await new Promise<void>((resolve, reject) => {
+      // Set up error handler
+      const onError = (err: any) => {
+        console.error('Express error:', err);
+        if (!res.headersSent) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ message: 'Internal server error' }));
+        }
+        resolve();
+      };
+
+      res.on('error', onError);
+      
+      // Call the Express app
+      app(req, res);
+      
+      // Wait for finish/close
+      res.on('finish', resolve);
+      res.on('close', resolve);
+      
+      // Timeout safety - resolve after 25 seconds (Vercel timeout is 30s)
+      setTimeout(resolve, 25000);
+    });
+
+    console.log(`[API Handler] Completed ${req.method} ${req.url} with status ${res.statusCode}`);
   } catch (error) {
     console.error('[API Handler Error]', error);
-    res.statusCode = 500;
-    res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ message: 'Internal server error', error: String(error) }));
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ message: 'Internal server error', error: String(error) }));
+    }
   }
 }
