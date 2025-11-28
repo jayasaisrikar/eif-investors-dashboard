@@ -17,11 +17,6 @@
       "handle": "filesystem"
     },
     {
-      "src": "/api/(.*)",
-      "dest": "/api/[...server]",
-      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    },
-    {
       "src": "/(.*)",
       "dest": "/index.html"
     }
