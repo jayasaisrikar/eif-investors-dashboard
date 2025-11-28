@@ -1,4 +1,4 @@
-import supabase from "../supabase";
+import supabase from "../supabase.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const supabaseClient: SupabaseClient = supabase;
@@ -262,7 +262,7 @@ export async function getRecommendedCompanies(investorUserId: string, limit = 4)
   if (!companies || companies.length === 0) return [];
 
   // Import match engine
-  const { matchEngine } = await import('./matchEngine');
+  const { matchEngine } = await import('./matchEngine.js');
 
   // Calculate match scores for each company
   const companiesWithScores = companies.map(company => ({

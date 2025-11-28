@@ -1,7 +1,7 @@
 import { type User, type InsertUser } from "@shared/schema";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import bcrypt from "bcryptjs";
-import supabaseClient from "./supabase";
+import supabaseClient from "./supabase.js";
 import crypto from "crypto";
 
 // modify the interface with any CRUD methods you might need

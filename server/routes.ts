@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { storage } from "./storage.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import {
@@ -13,12 +13,12 @@ import {
   listMeetingRequestsForUser,
   searchCompanyProfiles,
   upsertCompanyProfile,
-} from "./lib/db";
-import { recordProfileView, recordDeckDownload, getCompanyOverviewMetrics, getInvestorOverviewMetrics, getRecommendedCompanies, getUpcomingMeetings } from "./lib/db";
-import { updateInvestorProfile } from "./lib/db";
+} from "./lib/db.js";
+import { recordProfileView, recordDeckDownload, getCompanyOverviewMetrics, getInvestorOverviewMetrics, getRecommendedCompanies, getUpcomingMeetings } from "./lib/db.js";
+import { updateInvestorProfile } from "./lib/db.js";
 import { type InsertUser } from "@shared/schema";
-import { matchEngine } from "./lib/matchEngine";
-import { log } from "./index";
+import { matchEngine } from "./lib/matchEngine.js";
+import { log } from "./index.js";
 
 export async function registerRoutes(
   httpServer: Server,
