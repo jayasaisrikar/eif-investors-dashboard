@@ -20,6 +20,10 @@ async function getApp() {
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
     console.log(`[api/auth] ${req.method} ${req.url}`);
+    console.log(`[api/auth] JWT_SECRET exists: ${!!process.env.JWT_SECRET}`);
+    console.log(`[api/auth] SUPABASE_URL exists: ${!!process.env.SUPABASE_URL}`);
+    console.log(`[api/auth] NODE_ENV: ${process.env.NODE_ENV}`);
+    
     const app = await getApp();
     
     return new Promise<void>((resolve) => {
