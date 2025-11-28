@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
-import { createApp } from './app-factory';
+import { createApp } from './app-factory.js'
 
 let appPromise: Promise<any> | null = null;
 

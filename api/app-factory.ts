@@ -2,7 +2,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { createServer } from 'http';
-import { registerRoutes } from '../server/routes';
+import { registerRoutes } from '../server/routes.js'
 
 let appInstance: any = null;
 
