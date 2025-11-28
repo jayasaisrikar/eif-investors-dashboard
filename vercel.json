@@ -14,9 +14,16 @@
   ],
   "routes": [
     {
+      "src": "/api/health",
+      "dest": "/api/health"
+    },
+    {
+      "src": "/api/auth/(.*)",
+      "dest": "/api/auth/index"
+    },
+    {
       "src": "/api/(.*)",
-      "dest": "/api/[...server]",
-      "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+      "dest": "/api/[...server]"
     },
     {
       "handle": "filesystem"
