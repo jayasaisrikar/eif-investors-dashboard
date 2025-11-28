@@ -51,9 +51,13 @@ export async function createApp() {
     });
 
     // register routes (pass an http server instance)
+    // NOTE: don't await registration to reduce cold-start latency in serverless environments.
+    // registerRoutes performs only route wiring; any heavy work inside handlers runs per-request.
     const httpServer = createServer();
-    console.log('[createApp] Registering routes...');
-    await registerRoutes(httpServer as any, app as any);
+    console.log('[createApp] Registering routes (async, not blocking)...');
+    registerRoutes(httpServer as any, app as any).catch((err) => {
+      console.error('[createApp] registerRoutes failed:', err);
+    });
 
     console.log('[createApp] App initialized successfully');
     appInstance = app;
