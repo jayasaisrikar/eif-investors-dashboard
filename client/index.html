@@ -21,41 +21,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <noscript>
-      <div style="display:block;padding:20px;background:#b91c1c;color:white;font-family:monospace">Please enable JavaScript in your browser to view this site.</div>
-    </noscript>
-    <script>
-      // Minimal runtime error overlay for production so we can see errors instead of a white page.
-      (function () {
-        function showError(message) {
-          try {
-            var root = document.getElementById('root');
-            if (root) {
-              root.innerHTML = '<div style="padding:20px;color:#fff;background:#b91c1c;font-family:monospace;white-space:pre-wrap;">' + message + '</div>';
-            } else {
-              var bodyDiv = document.createElement('div');
-              bodyDiv.style.cssText = 'padding:20px;color:#fff;background:#b91c1c;font-family:monospace;white-space:pre-wrap;';
-              bodyDiv.textContent = message;
-              document.body.appendChild(bodyDiv);
-            }
-          } catch (e) {
-            // ignore overlay errors
-            console.error('error overlay failed', e);
-          }
-        }
-
-        window.addEventListener('error', function (event) {
-          var msg = 'Uncaught Error: ' + (event.error && event.error.stack ? event.error.stack : event.message + ' at ' + event.filename + ':' + event.lineno + ':' + event.colno);
-          showError(msg);
-        });
-
-        window.addEventListener('unhandledrejection', function (event) {
-          var reason = event.reason && (event.reason.stack || event.reason);
-          var msg = 'Unhandled Promise Rejection: ' + (reason || JSON.stringify(event.reason));
-          showError(msg);
-        });
-      })();
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
