@@ -5,6 +5,25 @@ import { createServer } from 'http';
 import { registerRoutes } from '../server/routes.js'
 
 let appInstance: any = null;
+let routesRegistered = false;
+let routeRegistrationError: any = null;
+
+async function ensureRoutesRegistered(app: any) {
+  if (routesRegistered) return;
+  if (routeRegistrationError) throw routeRegistrationError;
+  
+  try {
+    console.log('[ensureRoutesRegistered] Registering routes on first request...');
+    const httpServer = createServer();
+    await registerRoutes(httpServer as any, app as any);
+    routesRegistered = true;
+    console.log('[ensureRoutesRegistered] Routes registered successfully');
+  } catch (error) {
+    console.error('[ensureRoutesRegistered] Failed to register routes:', error);
+    routeRegistrationError = error;
+    throw error;
+  }
+}
 
 export async function createApp() {
   if (appInstance) return appInstance;
@@ -50,13 +69,18 @@ export async function createApp() {
       next();
     });
 
-    // register routes (pass an http server instance)
-    // NOTE: don't await registration to reduce cold-start latency in serverless environments.
-    // registerRoutes performs only route wiring; any heavy work inside handlers runs per-request.
-    const httpServer = createServer();
-    console.log('[createApp] Registering routes (async, not blocking)...');
-    registerRoutes(httpServer as any, app as any).catch((err) => {
-      console.error('[createApp] registerRoutes failed:', err);
+    // Middleware to ensure routes are registered before processing requests
+    app.use(async (req, res, next) => {
+      try {
+        await ensureRoutesRegistered(app);
+        next();
+      } catch (error) {
+        console.error('[middleware] Route registration failed:', error);
+        res.status(500).json({ 
+          message: 'Service initialization failed', 
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     });
 
     console.log('[createApp] App initialized successfully');
