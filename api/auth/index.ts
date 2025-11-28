@@ -24,7 +24,12 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     console.log(`[api/auth] SUPABASE_URL exists: ${!!process.env.SUPABASE_URL}`);
     console.log(`[api/auth] NODE_ENV: ${process.env.NODE_ENV}`);
     
-    const app = await getApp();
+    // Timeout after 8 seconds to avoid hanging
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Function timeout: app initialization took too long')), 8000)
+    );
+
+    const app = await Promise.race([getApp(), timeoutPromise]);
     
     return new Promise<void>((resolve) => {
       res.on('finish', resolve);
@@ -45,7 +50,9 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       res.end(JSON.stringify({ 
         message: 'Server error', 
         error: errorMsg,
-        env: process.env.NODE_ENV
+        env: process.env.NODE_ENV,
+        hasSUPABASE_URL: !!process.env.SUPABASE_URL,
+        hasJWT_SECRET: !!process.env.JWT_SECRET
       }));
     }
   }

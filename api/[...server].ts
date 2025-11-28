@@ -17,7 +17,13 @@ async function getApp() {
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
     console.log(`[API Handler] ${req.method} ${req.url}`);
-    const app = await getApp();
+    
+    // Timeout after 8 seconds to avoid hanging
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Function timeout: app initialization took too long')), 8000)
+    );
+
+    const app = await Promise.race([getApp(), timeoutPromise]);
     
     // Invoke the Express app and wait for the response to be sent
     await new Promise<void>((resolve, reject) => {
@@ -48,10 +54,16 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     console.log(`[API Handler] Completed ${req.method} ${req.url} with status ${res.statusCode}`);
   } catch (error) {
     console.error('[API Handler Error]', error);
+    const errorMsg = error instanceof Error ? error.message : String(error);
     if (!res.headersSent) {
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ message: 'Internal server error', error: String(error) }));
+      res.end(JSON.stringify({ 
+        message: 'Internal server error', 
+        error: errorMsg,
+        hasSUPABASE_URL: !!process.env.SUPABASE_URL,
+        hasJWT_SECRET: !!process.env.JWT_SECRET
+      }));
     }
   }
 }
