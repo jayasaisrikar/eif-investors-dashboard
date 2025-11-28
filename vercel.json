@@ -14,22 +14,26 @@
   ],
   "routes": [
     {
-      "src": "/api/health",
-      "dest": "/api/health"
+      "src": "/api/health$",
+      "dest": "/api/health.ts"
     },
     {
-      "src": "/api/auth/(.*)",
-      "dest": "/api/auth/index"
+      "src": "/api/auth/login$",
+      "dest": "/api/auth/index.ts"
+    },
+    {
+      "src": "/api/auth/logout$",
+      "dest": "/api/auth/index.ts"
     },
     {
       "src": "/api/(.*)",
-      "dest": "/api/[...server]"
+      "dest": "/api/[...server].ts"
     },
     {
       "handle": "filesystem"
     },
     {
-      "src": "/(.*)",
+      "src": "^/(?!api/).*",
       "dest": "/index.html"
     }
   ],
