@@ -21,6 +21,11 @@ export interface IStorage {
   validateResetToken(token: string): Promise<{ user_id: string; token: string; expires_at: string } | null>;
   updateUserPassword(userId: string, newPassword: string): Promise<User | null>;
   invalidateResetTokens(userId: string): Promise<void>;
+  // Email verification
+  createEmailVerificationToken(userId: string): Promise<{ token: string; expiresAt: string } | null>;
+  validateEmailVerificationToken(token: string): Promise<{ user_id: string; token: string; expires_at: string } | null>;
+  markEmailVerified(userId: string): Promise<void>;
+  listUsers(limit?: number): Promise<User[]>;
 }
 
 export class SupabaseStorage implements IStorage {
@@ -40,6 +45,7 @@ export class SupabaseStorage implements IStorage {
       name: row.name ?? row.username ?? row.email,
       password: row.password ?? row.hashed_password ?? undefined,
       role: row.role ?? undefined,
+      email_verified: row.email_verified ?? false,
     };
     return user as User;
   }
@@ -121,6 +127,63 @@ export class SupabaseStorage implements IStorage {
       token: data?.token ?? token,
       expiresAt: data?.expires_at ?? expiresAt.toISOString(),
     };
+  }
+
+  async listUsers(limit = 100): Promise<User[]> {
+    const { data, error } = await this.client.from('users_eif').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (error) {
+      console.error('Failed to list users:', error);
+      return [];
+    }
+    return (data ?? []).map((r: any) => this.mapSupabaseRowToUser(r)).filter(Boolean) as User[];
+  }
+
+  async createEmailVerificationToken(userId: string): Promise<{ token: string; expiresAt: string } | null> {
+    const token = crypto.randomBytes(24).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24);
+    const { data, error } = await this.client
+      .from('email_verifications_eif')
+      .insert({ user_id: userId, token, expires_at: expiresAt.toISOString(), created_at: new Date().toISOString() })
+      .select('token, expires_at')
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Failed to create email verification token:', error);
+      return null;
+    }
+
+    return {
+      token: data?.token ?? token,
+      expiresAt: data?.expires_at ?? expiresAt.toISOString(),
+    };
+  }
+
+  async validateEmailVerificationToken(token: string): Promise<{ user_id: string; token: string; expires_at: string } | null> {
+    const { data, error } = await this.client
+      .from('email_verifications_eif')
+      .select('user_id, token, expires_at')
+      .eq('token', token)
+      .limit(1)
+      .maybeSingle();
+
+    if (error || !data) return null;
+
+    const expiresAt = new Date(data.expires_at);
+    if (expiresAt < new Date()) {
+      // delete expired token
+      await this.client.from('email_verifications_eif').delete().eq('token', token);
+      return null;
+    }
+
+    return { user_id: data.user_id, token: data.token, expires_at: data.expires_at };
+  }
+
+  async markEmailVerified(userId: string): Promise<void> {
+    await this.client.from('users_eif').update({ email_verified: true, updated_at: new Date().toISOString() }).eq('id', userId);
+    // remove any verification tokens for this user
+    await this.client.from('email_verifications_eif').delete().eq('user_id', userId);
   }
 
   async validateResetToken(token: string): Promise<{ user_id: string; token: string; expires_at: string } | null> {

@@ -1,6 +1,8 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage.js";
+import nodemailer from 'nodemailer';
+import crypto from 'crypto';
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import {
@@ -11,9 +13,15 @@ import {
   createMeetingRequest,
   createTimeProposal,
   listMeetingRequestsForUser,
+  getMeetingRequestById,
+  updateMeetingRequest,
+  listNotificationsForUser,
+  markNotificationAsRead,
   searchCompanyProfiles,
   upsertCompanyProfile,
 } from "./lib/db.js";
+import { createMeetingFromRequest } from './lib/db.js';
+import { createGoogleMeetEvent } from './lib/googleCalendar.js';
 import { recordProfileView, recordDeckDownload, getCompanyOverviewMetrics, getInvestorOverviewMetrics, getRecommendedCompanies, getUpcomingMeetings } from "./lib/db.js";
 import { updateInvestorProfile } from "./lib/db.js";
 import { type InsertUser } from "@shared/schema";
@@ -40,11 +48,40 @@ export async function registerRoutes(
 
       const user = await storage.createUser({ email, name, password, role });
 
-      // Optionally issue a JWT on registration
-      const jwtSecret = process.env.JWT_SECRET;
-      if (jwtSecret) {
-        const token = jwt.sign({ sub: user.id, username: user.username, role: (user as any).role }, jwtSecret, { expiresIn: '7d' });
-        res.cookie('token', token, { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', maxAge: 7 * 24 * 60 * 60 * 1000 });
+      // Do not auto-login on registration. Require email verification before allowing login.
+
+      // Create an email verification token and send verification email (if configured)
+      try {
+        const verification = await storage.createEmailVerificationToken(user.id);
+        const origin = (process.env.APP_URL && process.env.APP_URL.trim()) || `${req.protocol}://${req.get('host')}`;
+        const verifyLink = `${origin.replace(/\/$/, '')}/auth?verify_token=${verification?.token}`;
+
+        // Send email if SMTP config present
+        if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+          try {
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST,
+              port: Number(process.env.SMTP_PORT || 587),
+              secure: (process.env.SMTP_SECURE || 'false') === 'true',
+              auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+            });
+            const from = process.env.SMTP_FROM || 'noreply@localhost';
+            await transporter.sendMail({
+              from,
+              to: user.email,
+              subject: 'Verify your email',
+              html: `<p>Welcome to EIF. Please verify your email by clicking <a href="${verifyLink}">this link</a>.</p>`
+            });
+          } catch (e) {
+            log(`email send warning: ${(e as any)?.message ?? String(e)}`, 'routes');
+            log(`[EMAIL VERIFICATION LINK] ${verifyLink}`, 'routes');
+          }
+        } else {
+          // Fallback: log verification link for development
+          log(`[EMAIL VERIFICATION LINK] ${verifyLink}`, 'routes');
+        }
+      } catch (e) {
+        log(`create verification token warning: ${(e as any)?.message ?? String(e)}`, 'routes');
       }
 
       // If the new user is a company, ensure a company_profiles_eif row exists (empty/defaults)
@@ -81,6 +118,11 @@ export async function registerRoutes(
       const user = await storage.getUserByUsername(email);
       if (!user || !user.password) return res.status(401).json({ message: 'invalid credentials' });
 
+      // Require email verification
+      if (!(user as any).email_verified) {
+        return res.status(403).json({ message: 'email not verified' });
+      }
+
       const matches = await bcrypt.compare(password, user.password as string);
       if (!matches) return res.status(401).json({ message: 'invalid credentials' });
 
@@ -98,6 +140,23 @@ export async function registerRoutes(
     } catch (err: any) {
       log(`login error: ${err?.message ?? String(err)}`, 'routes');
       return res.status(500).json({ message: 'error logging in' });
+    }
+  });
+
+  // Verify email token
+  app.get('/api/auth/verify', async (req, res) => {
+    try {
+      const token = req.query.token || req.query.verify_token;
+      if (!token || typeof token !== 'string') return res.status(400).json({ message: 'token required' });
+
+      const rec = await storage.validateEmailVerificationToken(token);
+      if (!rec) return res.status(400).json({ message: 'invalid or expired token' });
+
+      await storage.markEmailVerified(rec.user_id);
+      return res.json({ message: 'email verified' });
+    } catch (err: any) {
+      log(`email verify error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error verifying email' });
     }
   });
 
@@ -135,9 +194,24 @@ export async function registerRoutes(
       // TODO: Integrate email service (e.g., Resend, SendGrid, Mailgun).
       // For development we log the link. In production you must send the link by email.
       // Example with Resend (pseudo):
-      // await resend.emails.send({ from: 'noreply@yourdomain.com', to: email, subject: 'Reset your EIF password', html: `<a href="${resetLink}">Reset</a>` });
-
-      log(`[PASSWORD RESET] Link for ${email}: ${resetLink}`, 'routes');
+      // Try sending via SMTP (nodemailer) when configured
+      if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+        try {
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT || 587),
+            secure: (process.env.SMTP_SECURE || 'false') === 'true',
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          });
+          const from = process.env.SMTP_FROM || 'noreply@localhost';
+          await transporter.sendMail({ from, to: email, subject: 'Reset your EIF password', html: `<p>Reset your password by clicking <a href="${resetLink}">this link</a>.</p>` });
+        } catch (e) {
+          log(`email send warning: ${(e as any)?.message ?? String(e)}`, 'routes');
+          log(`[PASSWORD RESET] Link for ${email}: ${resetLink}`, 'routes');
+        }
+      } else {
+        log(`[PASSWORD RESET] Link for ${email}: ${resetLink}`, 'routes');
+      }
 
       // Return a generic message (prevents email enumeration). Include a dev-only
       // copy of the link when not in production to make testing easier.
@@ -407,6 +481,70 @@ export async function registerRoutes(
     }
   });
 
+  // Admin: list users
+  app.get('/api/admin/users', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      if (!process.env.JWT_SECRET) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as any;
+      const role = (payload?.role ?? '').toString().toLowerCase();
+      if (!role.includes('admin')) return res.status(403).json({ message: 'forbidden' });
+
+      const users = await storage.listUsers(500);
+      return res.json(users);
+    } catch (err: any) {
+      log(`admin list users error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error listing users' });
+    }
+  });
+
+  // Admin: invite a user (auto-generated password)
+  app.post('/api/admin/invite', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      if (!process.env.JWT_SECRET) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as any;
+      const role = (payload?.role ?? '').toString().toLowerCase();
+      if (!role.includes('admin')) return res.status(403).json({ message: 'forbidden' });
+
+      const { email, name, role: inviteRole } = req.body as { email?: string; name?: string; role?: string };
+      if (!email) return res.status(400).json({ message: 'email required' });
+
+      // generate password
+      const generated = crypto.randomBytes(6).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 12);
+
+      const newUser = await storage.createUser({ email, password: generated, name: name ?? undefined, role: inviteRole ?? 'user' });
+
+      // mark email verified so invitee can immediately login
+      await storage.markEmailVerified(newUser.id);
+
+      // send invite email
+      if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+        try {
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT || 587),
+            secure: (process.env.SMTP_SECURE || 'false') === 'true',
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          });
+          const from = process.env.SMTP_FROM || 'noreply@localhost';
+          const origin = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+          const loginLink = `${origin.replace(/\/$/, '')}/auth`;
+          await transporter.sendMail({ from, to: email, subject: 'You are invited to EIF', html: `<p>Your account has been created. Login at <a href="${loginLink}">${loginLink}</a><br/>Email: ${email}<br/>Password: ${generated}</p>` });
+        } catch (e) {
+          log(`invite email send warning: ${(e as any)?.message ?? String(e)}`, 'routes');
+        }
+      }
+
+      return res.status(201).json({ id: newUser.id, email: newUser.email });
+    } catch (err: any) {
+      log(`admin invite error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error inviting user' });
+    }
+  });
+
   // Meeting requests
   app.post('/api/meetings/requests', async (req, res) => {
     try {
@@ -624,6 +762,132 @@ export async function registerRoutes(
     } catch (err: any) {
       log(`list meeting requests error: ${err?.message ?? String(err)}`, 'routes');
       return res.status(500).json({ message: 'error listing meeting requests' });
+    }
+  });
+
+  // List notifications for current authenticated user
+  app.get('/api/notifications', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const items = await listNotificationsForUser(userId);
+      return res.json(items);
+    } catch (err: any) {
+      log(`list notifications error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error listing notifications' });
+    }
+  });
+
+  // Mark a notification as read
+  app.patch('/api/notifications/:id/read', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const notificationId = req.params.id;
+      const updated = await markNotificationAsRead(notificationId, userId);
+      return res.json(updated);
+    } catch (err: any) {
+      log(`mark notification read error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error marking notification read' });
+    }
+  });
+
+  // Update a meeting request (accept/decline/cancel)
+  app.patch('/api/meetings/requests/:id', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const meetingId = req.params.id;
+      const updates = req.body as Record<string, any>;
+
+      const meeting = await getMeetingRequestById(meetingId);
+      if (!meeting) return res.status(404).json({ message: 'meeting not found' });
+
+      // Only participants may update meeting details generally
+      if (meeting.from_user_id !== userId && meeting.to_user_id !== userId) {
+        return res.status(403).json({ message: 'forbidden' });
+      }
+
+      // Enforce role-based status updates:
+      // - Only the recipient (`to_user_id`) may accept or decline (CONFIRMED / DECLINED)
+      // - Only the requester (`from_user_id`) may cancel the request (CANCELLED)
+      if (updates && typeof updates.status === 'string') {
+        const s = updates.status.toString().toUpperCase();
+        if ((s === 'CONFIRMED' || s === 'DECLINED') && userId !== meeting.to_user_id) {
+          return res.status(403).json({ message: 'only the recipient may accept or decline this meeting' });
+        }
+        if (s === 'CANCELLED' && userId !== meeting.from_user_id) {
+          return res.status(403).json({ message: 'only the requester may cancel this meeting' });
+        }
+      }
+
+      // Allowed status transitions are handled by business logic on the client.
+      const updated = await updateMeetingRequest(meetingId, updates);
+
+      // If this update confirms the meeting and the client provided start/end times,
+      // attempt to create a Google Meet event (if configured) and persist a meeting record.
+      try {
+        if ((updates.status || '').toString().toUpperCase() === 'CONFIRMED' && updates.start_time && updates.end_time) {
+          const start = new Date(updates.start_time).toISOString();
+          const end = new Date(updates.end_time).toISOString();
+
+          let meetUrl: string | undefined;
+          // If Google service account configured, create a calendar event to get a Meet URL
+          if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON && process.env.GOOGLE_CALENDAR_ID) {
+            try {
+              const reqRow = await getMeetingRequestById(meetingId);
+              const attendees: string[] = [];
+              if (reqRow?.from_user_id) {
+                const u = await storage.getUser(reqRow.from_user_id);
+                if (u?.email) attendees.push(u.email);
+              }
+              if (reqRow?.to_user_id) {
+                const u2 = await storage.getUser(reqRow.to_user_id);
+                if (u2?.email) attendees.push(u2.email);
+              }
+
+              const ev = await createGoogleMeetEvent({ summary: 'EIF Meeting', description: reqRow?.message ?? '', start, end, attendees });
+              meetUrl = ev?.meetUrl ?? ev?.htmlLink;
+            } catch (e) {
+              log(`google calendar create event failed: ${(e as any)?.message ?? String(e)}`, 'routes');
+            }
+          }
+
+          // Persist meeting in our DB (will throw if required fields missing)
+          try {
+            const meetingRec = await createMeetingFromRequest(meetingId, start, end, updates.timezone ?? 'UTC', meetUrl ? 'google_meet' : (updates.location_type ?? null), meetUrl ?? updates.location_url ?? null);
+            // include meeting record in response
+            return res.json({ meetingRequest: updated, meeting: meetingRec });
+          } catch (e) {
+            log(`persist meeting record failed: ${(e as any)?.message ?? String(e)}`, 'routes');
+          }
+        }
+      } catch (e) {
+        log(`post-confirm hooks error: ${(e as any)?.message ?? String(e)}`, 'routes');
+      }
+
+      return res.json(updated);
+    } catch (err: any) {
+      log(`update meeting request error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error updating meeting request' });
     }
   });
 

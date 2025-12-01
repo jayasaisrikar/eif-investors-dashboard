@@ -92,14 +92,46 @@ export async function upsertCompanyProfile(userId: string, updates: Record<strin
 }
 
 export async function updateInvestorProfile(userId: string, updates: Record<string, any>) {
-  const { data, error } = await ensureSupabase()
-    .from('investor_profiles_eif')
-    .update(updates)
-    .eq('user_id', userId)
-    .select('*')
-    .maybeSingle();
-  if (error) throw error;
-  return data;
+  const sup = ensureSupabase();
+
+  // Try updating; if the DB schema is missing columns the client sends (e.g. check_size_unit),
+  // Supabase will return an error. In that case, detect the missing column from the error
+  // message, remove it from the payload, and retry. Limit retries to avoid infinite loops.
+  let payload = { ...updates };
+  const maxRetries = 5;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const res = await sup
+      .from('investor_profiles_eif')
+      .update(payload)
+      .eq('user_id', userId)
+      .select('*')
+      .maybeSingle();
+
+    // If no error, return the data
+    if (!(res as any).error) return (res as any).data;
+
+    const err = (res as any).error;
+    const msg = String(err?.message ?? err?.details ?? '');
+
+    // Detect missing column pattern from Postgres/Supabase messages
+    // Example: "Could not find the 'check_size_unit' column of 'investor_profiles_eif' in the schema cache"
+    const m = msg.match(/Could not find the '([^']+)' column/);
+    if (m && m[1]) {
+      const col = m[1];
+      // If the payload contains the column, remove it and retry
+      if (Object.prototype.hasOwnProperty.call(payload, col)) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete payload[col];
+        continue; // retry
+      }
+    }
+
+    // If error is not a missing-column that we can handle, throw it
+    throw err;
+  }
+
+  // If we exhausted retries, throw a generic error
+  throw new Error('failed to update investor profile after retries');
 }
 
 export async function createMeetingRequest(fromUserId: string, toUserId: string, fromRole: string, toRole: string, message?: string) {
@@ -128,6 +160,27 @@ export async function listMeetingRequestsForUser(userId: string) {
     .select("*")
     .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
     .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data;
+}
+
+export async function getMeetingRequestById(meetingId: string) {
+  const { data, error } = await ensureSupabase()
+    .from('meeting_requests_eif')
+    .select('*')
+    .eq('id', meetingId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateMeetingRequest(meetingId: string, updates: Record<string, any>) {
+  const { data, error } = await ensureSupabase()
+    .from('meeting_requests_eif')
+    .update(updates)
+    .eq('id', meetingId)
+    .select('*')
+    .maybeSingle();
   if (error) throw error;
   return data;
 }
@@ -299,3 +352,62 @@ export async function getUpcomingMeetings(userId: string, limit = 5) {
 }
 
 export default supabaseClient as SupabaseClient;
+
+// Notifications helpers
+export async function listNotificationsForUser(userId: string, limit = 20) {
+  const { data, error } = await ensureSupabase()
+    .from('notifications_eif')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function markNotificationAsRead(notificationId: string, userId: string) {
+  const { data, error } = await ensureSupabase()
+    .from('notifications_eif')
+    .update({ is_read: true })
+    .eq('id', notificationId)
+    .eq('user_id', userId)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Create a confirmed meeting record linked to an existing meeting request
+export async function createMeetingFromRequest(meetingRequestId: string, startTime: string, endTime: string, timezone = 'UTC', location_type?: string, location_url?: string) {
+  const sup = ensureSupabase();
+
+  // Get meeting request to obtain participants
+  const { data: reqData, error: reqErr } = await sup.from('meeting_requests_eif').select('*').eq('id', meetingRequestId).maybeSingle();
+  if (reqErr) throw reqErr;
+  if (!reqData) throw new Error('meeting_request_not_found');
+
+  const participantA = reqData.from_user_id;
+  const participantB = reqData.to_user_id;
+
+  const payload: any = {
+    participant_a_id: participantA,
+    participant_b_id: participantB,
+    start_time: startTime,
+    end_time: endTime,
+    timezone,
+    location_type: location_type ?? null,
+    location_url: location_url ?? null,
+  };
+
+  const { data, error } = await sup.from('meetings_eif').insert(payload).select('*').maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Optional: update an existing meeting record's location/url
+export async function updateMeetingLocation(meetingId: string, location_type?: string, location_url?: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('meetings_eif').update({ location_type: location_type ?? null, location_url: location_url ?? null }).eq('id', meetingId).select('*').maybeSingle();
+  if (error) throw error;
+  return data;
+}

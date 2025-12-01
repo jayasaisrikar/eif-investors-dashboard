@@ -23,6 +23,7 @@ interface MeetingRequest {
 export default function InvestorMeetings() {
   const { toast } = useToast();
   const [meetings, setMeetings] = useState<MeetingRequest[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,6 +34,7 @@ export default function InvestorMeetings() {
         const userRes = await fetch('/api/users/me', { credentials: 'include' });
         if (!userRes.ok) throw new Error('Could not get current user');
         const user = await userRes.json();
+        setCurrentUserId(user.id ?? null);
 
         // Get meeting requests for this user
         const meRes = await fetch(`/api/meetings/requests/${user.id}`, { credentials: 'include' });
@@ -52,6 +54,24 @@ export default function InvestorMeetings() {
 
   const upcomingMeetings = meetings.filter(m => m.status === 'CONFIRMED');
   const pendingMeetings = meetings.filter(m => m.status === 'PENDING');
+
+  const handleUpdateMeeting = async (id: string, status: string) => {
+    try {
+      const res = await fetch(`/api/meetings/requests/${id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error('failed to update meeting');
+      const updated = await res.json();
+      setMeetings(prev => prev.map(m => (m.id === id ? updated : m)));
+      toast({ title: 'Meeting Updated', description: `Meeting ${status.toLowerCase()}` });
+    } catch (err: any) {
+      console.error('update meeting error', err);
+      toast({ title: 'Update Failed', description: 'Could not update meeting status.' });
+    }
+  };
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -150,10 +170,17 @@ export default function InvestorMeetings() {
                         <p className="text-sm text-muted-foreground">{meeting.message || "Wants to discuss an investment opportunity"}</p>
                         <Badge variant="outline" className="text-yellow-500 border-yellow-500/20 bg-yellow-500/10 mt-2">PENDING RESPONSE</Badge>
                       </div>
-                      <div className="flex gap-2 ml-auto md:ml-0">
-                        <Button variant="outline" className="border-white/10">Decline</Button>
-                        <Button className="bg-primary hover:bg-primary/90">Accept</Button>
-                      </div>
+                        <div className="flex gap-2 ml-auto md:ml-0">
+                          {currentUserId && meeting.to_user_id === currentUserId ? (
+                            <>
+                              <Button variant="outline" className="border-white/10" onClick={() => handleUpdateMeeting(meeting.id, 'DECLINED')}>Decline</Button>
+                              <Button className="bg-primary hover:bg-primary/90" onClick={() => handleUpdateMeeting(meeting.id, 'CONFIRMED')}>Accept</Button>
+                            </>
+                          ) : (
+                            // If current user is the requester, show a non-action label or allow cancel
+                            <Button variant="ghost" className="opacity-70" onClick={() => toast({ title: 'Request Sent', description: 'Waiting for the recipient to respond.' })}>Awaiting response</Button>
+                          )}
+                        </div>
                     </CardContent>
                   </Card>
                 ))}

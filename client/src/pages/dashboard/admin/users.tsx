@@ -6,17 +6,40 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, MoreHorizontal, Shield, Ban, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useEffect, useState } from "react";
 
-const USERS = [
-  { id: 1, name: "GreenTech Ventures", email: "contact@greentech.vc", role: "Investor", status: "Active", joined: "Oct 12, 2024" },
-  { id: 2, name: "Solar Solutions Inc", email: "admin@solarsolutions.com", role: "Company", status: "Active", joined: "Nov 01, 2024" },
-  { id: 3, name: "James Wilson", email: "j.wilson@apexcapital.com", role: "Investor", status: "Active", joined: "Nov 05, 2024" },
-  { id: 4, name: "HydroGen Corp", email: "info@hydrogencorp.energy", role: "Company", status: "Pending", joined: "Today" },
-  { id: 5, name: "Wind Power Ltd", email: "hello@windpower.co.uk", role: "Company", status: "Suspended", joined: "Sep 15, 2024" },
-];
+interface AdminUser {
+  id: string;
+  email: string;
+  name?: string;
+  role?: string;
+  email_verified?: boolean;
+  created_at?: string;
+}
+
+const USERS: AdminUser[] = [];
 
 export default function AdminUsers() {
   const { toast } = useToast();
+  const [users, setUsers] = useState<AdminUser[]>(USERS);
+  const [loading, setLoading] = useState(true);
+  const [inviteEmail, setInviteEmail] = useState('');
+
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await fetch('/api/admin/users', { credentials: 'include' });
+        if (!res.ok) throw new Error('failed to fetch users');
+        const data = await res.json();
+        setUsers(data || []);
+      } catch (err: any) {
+        toast({ title: 'Failed', description: 'Could not load users' });
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchUsers();
+  }, []);
   return (
     <DashboardLayout role="admin">
       <div className="space-y-6">
@@ -48,38 +71,58 @@ export default function AdminUsers() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {USERS.map((user) => (
-                  <TableRow key={user.id} className="border-white/10 hover:bg-white/5">
-                    <TableCell className="font-medium">{user.name}</TableCell>
-                    <TableCell className="text-muted-foreground">{user.email}</TableCell>
-                    <TableCell>
-                       <Badge variant="outline" className={
-                        user.role === "Investor" 
-                          ? "bg-primary/10 text-primary border-primary/20" 
-                          : "bg-secondary/10 text-secondary border-secondary/20"
-                      }>
-                        {user.role}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{user.joined}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className={`
-                        ${user.status === 'Active' && 'bg-green-500/10 text-green-500'}
-                        ${user.status === 'Pending' && 'bg-yellow-500/10 text-yellow-500'}
-                        ${user.status === 'Suspended' && 'bg-red-500/10 text-red-500'}
-                      `}>
-                        {user.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontal className="w-4 h-4" />
-                      </Button>
-                    </TableCell>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">Loading...</TableCell>
                   </TableRow>
-                ))}
+                ) : users.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">No users found</TableCell>
+                  </TableRow>
+                ) : (
+                  users.map((user) => (
+                    <TableRow key={user.id} className="border-white/10 hover:bg-white/5">
+                      <TableCell className="font-medium">{user.name ?? user.email}</TableCell>
+                      <TableCell className="text-muted-foreground">{user.email}</TableCell>
+                      <TableCell>
+                         <Badge variant="outline" className={
+                          user.role?.toLowerCase() === "investor" 
+                            ? "bg-primary/10 text-primary border-primary/20" 
+                            : "bg-secondary/10 text-secondary border-secondary/20"
+                        }>
+                          {user.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{user.created_at ? new Date(user.created_at).toLocaleDateString() : '-'}</TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className={user.email_verified ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'}>
+                          {user.email_verified ? 'Verified' : 'Pending'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
+            <div className="mt-4 flex items-center gap-2">
+              <Input placeholder="Invite email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+              <Button onClick={async () => {
+                if (!inviteEmail) return toast({ title: 'Email required' });
+                try {
+                  const r = await fetch('/api/admin/invite', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: inviteEmail }) });
+                  if (!r.ok) throw new Error('invite failed');
+                  toast({ title: 'Invite Sent', description: `Invitation sent to ${inviteEmail}` });
+                  setInviteEmail('');
+                } catch (err) {
+                  toast({ title: 'Invite Failed', description: 'Could not send invite' });
+                }
+              }}>Invite</Button>
+            </div>
           </CardContent>
         </Card>
       </div>

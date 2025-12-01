@@ -49,17 +49,62 @@ export default function InvestorNetwork() {
 
         // Build contacts from confirmed/pending meetings
         const contactMap = new Map<string, Contact>();
-        
+
+        // Collect unique other user ids
+        const otherIds = new Set<string>();
         for (const meeting of meetings) {
           const otherUserId = meeting.from_user_id === user.id ? meeting.to_user_id : meeting.from_user_id;
-          const isCompany = meeting.to_role === 'COMPANY' || meeting.from_role === 'COMPANY';
-          
+          otherIds.add(otherUserId);
+        }
+
+        // Fetch basic user & profile data for each contact in parallel
+        const fetchPromises = Array.from(otherIds).map(async (otherId) => {
+          try {
+            const userRes = await fetch(`/api/users/${otherId}`, { credentials: 'include' });
+            const userObj = userRes.ok ? await userRes.json() : null;
+
+            let name = 'Contact';
+            let roleLabel: string | undefined = undefined;
+            let companyLabel: string | undefined = undefined;
+
+            if (userObj) {
+              name = userObj.name ?? userObj.email ?? 'Contact';
+              const role = (userObj.role ?? '').toString().toLowerCase();
+              if (role.includes('company')) {
+                const compRes = await fetch(`/api/companies/${otherId}`, { credentials: 'include' });
+                if (compRes.ok) {
+                  const comp = await compRes.json();
+                  roleLabel = comp.stage ?? 'Company';
+                  companyLabel = comp.company_name ?? comp.name ?? undefined;
+                }
+              } else {
+                const invRes = await fetch(`/api/investors/${otherId}`, { credentials: 'include' });
+                if (invRes.ok) {
+                  const inv = await invRes.json();
+                  roleLabel = inv.role ?? undefined;
+                  companyLabel = inv.firm ?? undefined;
+                }
+              }
+            }
+
+            return { id: otherId, name, role: roleLabel, company: companyLabel } as Contact;
+          } catch (err) {
+            console.error('fetch contact error', err);
+            return { id: otherId, name: 'Contact', status: 'Unknown' } as Contact;
+          }
+        });
+
+        const profiles = await Promise.all(fetchPromises);
+
+        for (const meeting of meetings) {
+          const otherUserId = meeting.from_user_id === user.id ? meeting.to_user_id : meeting.from_user_id;
           if (!contactMap.has(otherUserId)) {
+            const p = profiles.find(x => x.id === otherUserId);
             contactMap.set(otherUserId, {
               id: otherUserId,
-              name: isCompany ? 'Company Contact' : 'Contact',
-              role: isCompany ? 'Company Representative' : undefined,
-              company: undefined,
+              name: p?.name ?? (meeting.from_user_id === user.id ? 'Contact' : 'Contact'),
+              role: p?.role,
+              company: p?.company,
               status: meeting.status === 'CONFIRMED' ? 'Connected' : 'Pending',
               lastInteraction: formatTimeAgo(meeting.updated_at),
             });

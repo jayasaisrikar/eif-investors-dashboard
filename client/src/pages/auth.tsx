@@ -139,9 +139,9 @@ export default function AuthPage() {
 
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Registration failed');
-
-      if (values.role === 'company') setLocation('/dashboard/company');
-      else setLocation('/dashboard/investor');
+      // After registering we require email verification. Notify the user and don't auto-login.
+      toast({ title: 'Check your email', description: 'A verification link has been sent. Please verify your email before logging in.' });
+      registerForm.reset();
     } catch (err: any) {
       toast({ title: 'Registration failed', description: err?.message ?? 'Unable to register' });
     } finally {

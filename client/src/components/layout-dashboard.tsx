@@ -22,6 +22,8 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
+import { formatDistanceToNow } from 'date-fns';
 import { Input } from "@/components/ui/input";
 
 type Role = "investor" | "company" | "admin";
@@ -44,6 +46,9 @@ export function DashboardLayout({
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const { toast } = useToast();
 
   useEffect(() => {
     const fetchUserData = async () => {
@@ -61,6 +66,20 @@ export function DashboardLayout({
     };
 
     fetchUserData();
+    // fetch notifications
+    const fetchNotifications = async () => {
+      try {
+        const res = await fetch('/api/notifications', { credentials: 'include' });
+        if (res.ok) {
+          const data = await res.json();
+          setNotifications(data || []);
+          setUnreadCount((data || []).filter((n: any) => !n.is_read).length);
+        }
+      } catch (err) {
+        console.error('Failed to fetch notifications:', err);
+      }
+    };
+    fetchNotifications();
   }, []);
 
   const navItems = {
@@ -150,10 +169,47 @@ export function DashboardLayout({
           </div>
 
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="w-5 h-5 text-muted-foreground" />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-secondary rounded-full"></span>
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative">
+                  <Bell className="w-5 h-5 text-muted-foreground" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-medium leading-none text-white bg-destructive rounded-full">{unreadCount}</span>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-80" align="end" forceMount>
+                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+                <div className="max-h-64 overflow-y-auto">
+                  {notifications.length === 0 && <div className="p-3 text-sm text-muted-foreground">No notifications</div>}
+                  {notifications.map(n => (
+                    <DropdownMenuItem key={n.id} onClick={async () => {
+                      try {
+                        if (!n.is_read) {
+                          const r = await fetch(`/api/notifications/${n.id}/read`, { method: 'PATCH', credentials: 'include' });
+                          if (r.ok) {
+                            setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x));
+                            setUnreadCount(c => Math.max(0, c - 1));
+                          }
+                        }
+                        // optionally navigate or show details
+                        toast({ title: n.type ?? 'Notification', description: n.data?.message ?? 'Opened notification' });
+                      } catch (err) {
+                        console.error('mark read error', err);
+                      }
+                    }}>
+                      <div className="flex flex-col text-left">
+                        <span className="text-sm">{n.data?.title ?? n.type}</span>
+                        <span className="text-xs text-muted-foreground">{n.data?.message ?? ''}</span>
+                        <span className="text-xs text-muted-foreground mt-1">{formatDistanceToNow(new Date(n.created_at), { addSuffix: true })}</span>
+                      </div>
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => window.location.href = '/dashboard/notifications'}>View all</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
