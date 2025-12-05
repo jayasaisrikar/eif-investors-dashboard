@@ -92,6 +92,8 @@ export default function AuthPage() {
   const [resetEmail, setResetEmail] = useState('');
   const [registerError, setRegisterError] = useState<string | null>(null);
   const [resetToken, setResetToken] = useState('');
+  const [showResendVerification, setShowResendVerification] = useState(false);
+  const [resendEmail, setResendEmail] = useState('');
   const { toast } = useToast();
 
   // URL params parsing (simplified)
@@ -99,6 +101,7 @@ export default function AuthPage() {
   const defaultTab = searchParams.get("mode") === "register" ? "register" : "login";
   const defaultRole = searchParams.get("role") === "company" ? "company" : "investor";
   const tokenFromUrl = searchParams.get("token");
+  const verifyTokenFromUrl = searchParams.get("verify_token");
 
   const loginForm = useForm<z.infer<typeof loginSchema>>({
     resolver: zodResolver(loginSchema),
@@ -138,6 +141,32 @@ export default function AuthPage() {
       // populate the form's token value so validation passes and it's submitted
       resetPasswordForm.reset({ token: tokenFromUrl, password: '', confirmPassword: '' });
     }
+
+    // If the URL contains an email verification token (from registration), call the API to verify it.
+    async function verifyEmail(token: string) {
+      try {
+        setIsLoading(true);
+        const res = await fetch(`/api/auth/verify?verify_token=${encodeURIComponent(token)}`);
+        const data = await res.json();
+        if (res.ok) {
+          toast({ title: 'Email verified', description: 'Your email has been verified. You can now sign in.' });
+          // After verification, switch to login tab and clear the token param from URL
+          setLocation('/auth?mode=login');
+        } else {
+          toast({ title: 'Verification failed', description: data?.message ?? 'Unable to verify email', variant: 'destructive' });
+        }
+      } catch (err: any) {
+        toast({ title: 'Verification error', description: err?.message ?? 'Unable to verify email', variant: 'destructive' });
+      } finally {
+        setIsLoading(false);
+        // Remove token from URL to prevent re-run if user refreshes
+        try { window.history.replaceState({}, document.title, '/auth?mode=login'); } catch {};
+      }
+    }
+
+    if (verifyTokenFromUrl) {
+      verifyEmail(verifyTokenFromUrl);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tokenFromUrl]);
 
@@ -152,7 +181,13 @@ export default function AuthPage() {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data?.message || 'Login failed');
+        const msg = data?.message || 'Login failed';
+        // If not verified, surface resend UI
+        if (msg.toLowerCase().includes('not verified')) {
+          setShowResendVerification(true);
+          setResendEmail(values.email);
+        }
+        throw new Error(msg);
       }
 
       const role = data?.user?.role as string | undefined;
@@ -161,6 +196,28 @@ export default function AuthPage() {
       else setLocation('/dashboard/investor');
     } catch (err: any) {
       toast({ title: 'Login failed', description: err?.message ?? 'Unable to login' });
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handleResendVerification() {
+    if (!resendEmail) return;
+    setIsLoading(true);
+    try {
+      const res = await fetch('/api/auth/resend-verification', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resendEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.message || 'Failed to resend verification');
+      }
+      toast({ title: 'Verification sent', description: 'A new verification link has been sent to your email.' });
+      setShowResendVerification(false);
+    } catch (err: any) {
+      toast({ title: 'Resend failed', description: err?.message ?? 'Unable to resend verification', variant: 'destructive' });
     } finally {
       setIsLoading(false);
     }
@@ -545,6 +602,13 @@ export default function AuthPage() {
                   >
                     Forgot your password?
                   </Button>
+                  {showResendVerification && (
+                    <div className="pt-2">
+                      <Button type="button" className="w-full bg-secondary/80 hover:bg-secondary" onClick={handleResendVerification} disabled={isLoading}>
+                        {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : 'Resend verification email'}
+                      </Button>
+                    </div>
+                  )}
                 </form>
               </Form>
             </TabsContent>

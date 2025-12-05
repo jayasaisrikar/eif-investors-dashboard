@@ -538,7 +538,8 @@ export async function createUserAvailabilitySchedule(userId: string, dayOfWeek: 
   const { data, error } = await sup
     .from('user_availability_schedules_eif')
     .upsert(
-      { user_id: userId, day_of_week: dayOfWeek, available_from: availableFrom, available_to: availableTo, timezone },
+      // schema fields are `start_time` / `end_time` (type `time`) — ensure payload matches
+      { user_id: userId, day_of_week: dayOfWeek, start_time: availableFrom, end_time: availableTo, timezone },
       { onConflict: 'user_id, day_of_week' }
     )
     .select('*')

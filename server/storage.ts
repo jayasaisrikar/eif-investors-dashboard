@@ -89,6 +89,31 @@ export class SupabaseStorage implements IStorage {
       throw new Error('email_exists');
     }
 
+    // Normalize availability fields: if client sent a datetime-local (YYYY-MM-DDTHH:MM),
+    // convert to time-only string (HH:MM:SS) because some DB schemas use `time` type.
+    function toTimeOnly(v?: string | null) {
+      if (!v) return null;
+      // If value contains a 'T' (datetime-local), take the time part
+      if (v.indexOf('T') !== -1) {
+        const parts = v.split('T');
+        const timePart = parts[1] ?? '';
+        // ensure seconds are present
+        if (/^\d{2}:\d{2}$/.test(timePart)) return `${timePart}:00`;
+        if (/^\d{2}:\d{2}:\d{2}$/.test(timePart)) return timePart;
+        // fallback: try to parse and extract hours/minutes
+        const m = timePart.match(/(\d{2}:\d{2})/);
+        if (m) return `${m[1]}:00`;
+        return null;
+      }
+      // If already a time like HH:MM or HH:MM:SS, normalize
+      if (/^\d{2}:\d{2}$/.test(v)) return `${v}:00`;
+      if (/^\d{2}:\d{2}:\d{2}$/.test(v)) return v;
+      return null;
+    }
+
+    const normalizedAvailabilityFrom = toTimeOnly(registerUser.availability_from ?? null);
+    const normalizedAvailabilityTo = toTimeOnly(registerUser.availability_to ?? null);
+
     let { data, error } = await this.client
       .from("users_eif")
       .insert({ 
@@ -97,8 +122,8 @@ export class SupabaseStorage implements IStorage {
         role: userRole, 
         name: userName,
         automatic_availability: registerUser.automatic_availability ?? false,
-        availability_from: registerUser.availability_from ?? null,
-        availability_to: registerUser.availability_to ?? null,
+        availability_from: normalizedAvailabilityFrom ?? registerUser.availability_from ?? null,
+        availability_to: normalizedAvailabilityTo ?? registerUser.availability_to ?? null,
         availability_timezone: registerUser.availability_timezone ?? 'UTC',
         arrange_meetings: registerUser.arrange_meetings ?? false,
       })

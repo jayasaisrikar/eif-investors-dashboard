@@ -192,6 +192,55 @@ export async function registerRoutes(
     }
   });
 
+  // Resend verification email (for users who have not yet verified their email)
+  app.post('/api/auth/resend-verification', async (req, res) => {
+    try {
+      const { email } = req.body as { email?: string };
+      if (!email) return res.status(400).json({ message: 'email is required' });
+
+      const user = await storage.getUserByUsername(email);
+      if (!user) {
+        // Do not reveal whether an account exists. Return generic success.
+        return res.status(200).json({ message: 'If an account exists and is unverified, a verification link has been sent' });
+      }
+
+      const userData = user as any;
+      if (userData.email_verified) {
+        return res.status(400).json({ message: 'email already verified' });
+      }
+
+      // Create a new verification token
+      const verification = await storage.createEmailVerificationToken(user.id);
+      const origin = (process.env.APP_URL && process.env.APP_URL.trim()) || `${req.protocol}://${req.get('host')}`;
+      const verifyLink = `${origin.replace(/\/$/, '')}/auth?verify_token=${verification?.token}`;
+
+      // Send email if SMTP configured
+      if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+        try {
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT || 587),
+            secure: (process.env.SMTP_SECURE || 'false') === 'true',
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          });
+          const from = process.env.SMTP_FROM || 'noreply@localhost';
+          await transporter.sendMail({ from, to: user.email, subject: 'Verify your email', html: `<p>Please verify your email by clicking <a href="${verifyLink}">this link</a>.</p>` });
+        } catch (e) {
+          log(`email resend warning: ${(e as any)?.message ?? String(e)}`, 'routes');
+          log(`[EMAIL VERIFICATION LINK] ${verifyLink}`, 'routes');
+        }
+      } else {
+        // Log link for development
+        log(`[EMAIL VERIFICATION LINK] ${verifyLink}`, 'routes');
+      }
+
+      return res.status(200).json({ message: 'verification link sent' });
+    } catch (err: any) {
+      log(`resend verification error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error resending verification' });
+    }
+  });
+
   // Logout
   app.post('/api/auth/logout', (_req, res) => {
     res.clearCookie('token', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
