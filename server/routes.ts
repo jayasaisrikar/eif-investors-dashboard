@@ -19,11 +19,11 @@ import {
   markNotificationAsRead,
   searchCompanyProfiles,
   upsertCompanyProfile,
+  upsertInvestorProfile,
 } from "./lib/db.js";
 import { createMeetingFromRequest } from './lib/db.js';
 import { createGoogleMeetEvent } from './lib/googleCalendar.js';
 import { recordProfileView, recordDeckDownload, getCompanyOverviewMetrics, getInvestorOverviewMetrics, getRecommendedCompanies, getUpcomingMeetings } from "./lib/db.js";
-import { updateInvestorProfile } from "./lib/db.js";
 import { type InsertUser } from "@shared/schema";
 import { matchEngine } from "./lib/matchEngine.js";
 import { log } from "./index.js";
@@ -41,12 +41,44 @@ export async function registerRoutes(
   // Register (create user)
   app.post('/api/users', async (req, res) => {
     try {
-      const { name, email, password, role } = req.body as { name?: string; email?: string; password?: string; role?: string };
+      const { name, email, password, role, automatic_availability, availability_from, availability_to, availability_timezone, arrange_meetings } = req.body as { 
+        name?: string; 
+        email?: string; 
+        password?: string; 
+        role?: string;
+        automatic_availability?: boolean;
+        availability_from?: string;
+        availability_to?: string;
+        availability_timezone?: string;
+        arrange_meetings?: boolean;
+      };
       if (!email || !password) {
         return res.status(400).json({ message: 'email and password required' });
       }
 
-      const user = await storage.createUser({ email, name, password, role });
+      // Validate availability fields if automatic_availability is true
+      if (automatic_availability) {
+        if (!availability_from || !availability_to) {
+          return res.status(400).json({ message: 'availability_from and availability_to are required when automatic_availability is enabled' });
+        }
+        const fromTime = new Date(availability_from);
+        const toTime = new Date(availability_to);
+        if (toTime <= fromTime) {
+          return res.status(400).json({ message: 'availability_to must be after availability_from' });
+        }
+      }
+
+      const user = await storage.createUser({ 
+        email, 
+        name, 
+        password, 
+        role,
+        automatic_availability: automatic_availability ?? false,
+        availability_from,
+        availability_to,
+        availability_timezone: availability_timezone ?? 'UTC',
+        arrange_meetings: arrange_meetings ?? false,
+      });
 
       // Do not auto-login on registration. Require email verification before allowing login.
 
@@ -349,11 +381,11 @@ export async function registerRoutes(
       const userId = payload?.sub;
       if (!userId) return res.status(401).json({ message: 'invalid token' });
       const updates = req.body as Record<string, any>;
-      const updated = await updateInvestorProfile(userId, updates);
+      const updated = await upsertInvestorProfile(userId, updates);
       return res.json(updated);
     } catch (err: any) {
       log(`update current investor error: ${err?.message ?? String(err)}`, 'routes');
-      return res.status(500).json({ message: 'error updating investor profile' });
+      return res.status(500).json({ message: err?.message ?? 'error updating investor profile' });
     }
   });
 
@@ -461,7 +493,7 @@ export async function registerRoutes(
       return res.json(updated);
     } catch (err: any) {
       log(`update current company error: ${err?.message ?? String(err)}`, 'routes');
-      return res.status(500).json({ message: 'error updating company profile' });
+      return res.status(500).json({ message: err?.message ?? 'error updating company profile' });
     }
   });
 

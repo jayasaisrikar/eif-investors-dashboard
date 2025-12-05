@@ -70,14 +70,20 @@ export default function ProfilePage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
+        // Fetch authenticated user data
         const userRes = await fetch('/api/users/me', { credentials: 'include' });
-        if (userRes.ok) {
-          const data = await userRes.json();
-          setUserData(data);
-          setUserRole(data.role?.toLowerCase().includes('company') ? 'company' : 'investor');
+        if (!userRes.ok) {
+          throw new Error('Failed to fetch user data');
+        }
 
-          if (data.role?.toLowerCase().includes('company')) {
-            // Fetch company profile
+        const data = await userRes.json();
+        setUserData(data);
+        const isCompany = data.role?.toLowerCase().includes('company') ?? false;
+        setUserRole(isCompany ? 'company' : 'investor');
+
+        if (isCompany) {
+          // Fetch company profile
+          try {
             const compRes = await fetch('/api/companies/me', { credentials: 'include' });
             if (compRes.ok) {
               const comp = await compRes.json();
@@ -89,9 +95,19 @@ export default function ProfilePage() {
               setStage(comp.stage || "");
               setHqLocation(comp.hq_location || "");
               setCapitalSought(comp.capital_sought || "");
+            } else {
+              console.warn('Failed to fetch company profile');
+              toast({ 
+                title: 'Warning', 
+                description: 'Could not load all profile data. Please refresh the page.' 
+              });
             }
-          } else {
-            // Fetch investor profile
+          } catch (err) {
+            console.error('Company profile fetch error:', err);
+          }
+        } else {
+          // Fetch investor profile
+          try {
             const invRes = await fetch('/api/investors/me', { credentials: 'include' });
             if (invRes.ok) {
               const inv = await invRes.json();
@@ -103,23 +119,37 @@ export default function ProfilePage() {
               setAum(inv.aum || "");
               setCheckSizeUnit(inv.check_size_unit || "M");
               setSectors(inv.sectors || []);
+            } else {
+              console.warn('Failed to fetch investor profile');
+              toast({ 
+                title: 'Warning', 
+                description: 'Could not load all profile data. Please refresh the page.' 
+              });
             }
+          } catch (err) {
+            console.error('Investor profile fetch error:', err);
           }
         }
       } catch (err) {
-        console.error('fetch profile error', err);
+        console.error('Profile fetch error:', err);
+        toast({ 
+          title: 'Error', 
+          description: 'Failed to load profile. Please try again.',
+          variant: 'destructive'
+        });
       } finally {
         setLoading(false);
       }
     };
 
     fetchData();
-  }, []);
+  }, [toast]);
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      if (userRole === 'company' && companyProfile?.user_id) {
+      if (userRole === 'company') {
+        // Save company profile
         const res = await fetch('/api/companies/me', {
           method: 'PATCH',
           credentials: 'include',
@@ -134,8 +164,22 @@ export default function ProfilePage() {
             capital_sought: capitalSought,
           }),
         });
-        if (!res.ok) throw new Error('save failed');
-      } else if (investorProfile?.user_id) {
+        
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData?.message || 'Failed to save company profile');
+        }
+
+        // Refetch to verify persistence
+        const updatedProfile = await res.json();
+        setCompanyProfile(updatedProfile);
+        
+        toast({ 
+          title: 'Success', 
+          description: 'Your company profile has been saved successfully.' 
+        });
+      } else {
+        // Save investor profile
         const res = await fetch('/api/investors/me', {
           method: 'PATCH',
           credentials: 'include',
@@ -150,12 +194,28 @@ export default function ProfilePage() {
             sectors,
           }),
         });
-        if (!res.ok) throw new Error('save failed');
+        
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData?.message || 'Failed to save investor profile');
+        }
+
+        // Refetch to verify persistence
+        const updatedProfile = await res.json();
+        setInvestorProfile(updatedProfile);
+        
+        toast({ 
+          title: 'Success', 
+          description: 'Your investor profile has been saved successfully.' 
+        });
       }
-      toast({ title: 'Profile Updated', description: 'Your changes have been saved successfully.' });
-    } catch (err) {
-      console.error(err);
-      toast({ title: 'Save Failed', description: 'Could not save profile changes.' });
+    } catch (err: any) {
+      console.error('Profile save error:', err);
+      toast({ 
+        title: 'Save Failed', 
+        description: err?.message || 'Could not save profile changes. Please try again.',
+        variant: 'destructive'
+      });
     } finally {
       setSaving(false);
     }

@@ -11,6 +11,11 @@ export interface RegisterUser {
   name?: string;
   password: string;
   role?: string;
+  automatic_availability?: boolean;
+  availability_from?: string;
+  availability_to?: string;
+  availability_timezone?: string;
+  arrange_meetings?: boolean;
 }
 
 export interface IStorage {
@@ -86,7 +91,17 @@ export class SupabaseStorage implements IStorage {
 
     let { data, error } = await this.client
       .from("users_eif")
-      .insert({ email: userEmail, hashed_password: hashed, role: userRole, name: userName })
+      .insert({ 
+        email: userEmail, 
+        hashed_password: hashed, 
+        role: userRole, 
+        name: userName,
+        automatic_availability: registerUser.automatic_availability ?? false,
+        availability_from: registerUser.availability_from ?? null,
+        availability_to: registerUser.availability_to ?? null,
+        availability_timezone: registerUser.availability_timezone ?? 'UTC',
+        arrange_meetings: registerUser.arrange_meetings ?? false,
+      })
       .select("*")
       .limit(1)
       .maybeSingle();

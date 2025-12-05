@@ -22,12 +22,19 @@ export async function listInvestorProfiles(limit = 100) {
 }
 
 export async function getInvestorProfileByUserId(userId: string) {
+  console.log(`[getInvestorProfileByUserId] Fetching profile for userId: ${userId}`);
   const { data, error } = await ensureSupabase()
     .from("investor_profiles_eif")
     .select("*")
     .eq("user_id", userId)
     .maybeSingle();
-  if (error) throw error;
+  
+  if (error) {
+    console.error(`[getInvestorProfileByUserId] Error querying profile:`, error);
+    throw error;
+  }
+  
+  console.log(`[getInvestorProfileByUserId] Query result:`, data);
   return data;
 }
 
@@ -91,15 +98,52 @@ export async function upsertCompanyProfile(userId: string, updates: Record<strin
   return data;
 }
 
-export async function updateInvestorProfile(userId: string, updates: Record<string, any>) {
+export async function upsertInvestorProfile(userId: string, updates: Record<string, any>) {
   const sup = ensureSupabase();
 
+  // First check if profile exists
+  const { data: existingProfile, error: checkError } = await sup
+    .from('investor_profiles_eif')
+    .select('user_id')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (checkError) {
+    console.error(`[upsertInvestorProfile] Error checking profile existence:`, checkError);
+    throw checkError;
+  }
+
+  // If profile doesn't exist, create it with the updates
+  if (!existingProfile) {
+    console.log(`[upsertInvestorProfile] Profile doesn't exist, creating new one for userId: ${userId}`);
+    const insertPayload = { user_id: userId, ...updates };
+    console.log(`[upsertInvestorProfile] Insert payload:`, insertPayload);
+    
+    const { data, error } = await sup
+      .from('investor_profiles_eif')
+      .insert(insertPayload)
+      .select('*')
+      .maybeSingle();
+    
+    if (error) {
+      console.error(`[upsertInvestorProfile] Insert error:`, error);
+      throw error;
+    }
+    console.log(`[upsertInvestorProfile] Profile created successfully, returned data:`, data);
+    return data;
+  }
+
+  console.log(`[upsertInvestorProfile] Profile exists, updating userId: ${userId}`);
+  
+  // Profile exists, so update it
   // Try updating; if the DB schema is missing columns the client sends (e.g. check_size_unit),
   // Supabase will return an error. In that case, detect the missing column from the error
   // message, remove it from the payload, and retry. Limit retries to avoid infinite loops.
   let payload = { ...updates };
   const maxRetries = 5;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
+    console.log(`[upsertInvestorProfile] Update attempt ${attempt + 1}/${maxRetries}, payload:`, payload);
+    
     const res = await sup
       .from('investor_profiles_eif')
       .update(payload)
@@ -108,16 +152,21 @@ export async function updateInvestorProfile(userId: string, updates: Record<stri
       .maybeSingle();
 
     // If no error, return the data
-    if (!(res as any).error) return (res as any).data;
+    if (!(res as any).error) {
+      console.log(`[upsertInvestorProfile] Update successful, returned data:`, (res as any).data);
+      return (res as any).data;
+    }
 
     const err = (res as any).error;
     const msg = String(err?.message ?? err?.details ?? '');
+    console.warn(`[upsertInvestorProfile] Update error on attempt ${attempt + 1}:`, msg);
 
     // Detect missing column pattern from Postgres/Supabase messages
     // Example: "Could not find the 'check_size_unit' column of 'investor_profiles_eif' in the schema cache"
     const m = msg.match(/Could not find the '([^']+)' column/);
     if (m && m[1]) {
       const col = m[1];
+      console.log(`[upsertInvestorProfile] Detected missing column: ${col}, removing and retrying`);
       // If the payload contains the column, remove it and retry
       if (Object.prototype.hasOwnProperty.call(payload, col)) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
@@ -127,10 +176,12 @@ export async function updateInvestorProfile(userId: string, updates: Record<stri
     }
 
     // If error is not a missing-column that we can handle, throw it
+    console.error(`[upsertInvestorProfile] Unhandled error, throwing:`, err);
     throw err;
   }
 
   // If we exhausted retries, throw a generic error
+  console.error(`[upsertInvestorProfile] Exhausted retries for userId: ${userId}`);
   throw new Error('failed to update investor profile after retries');
 }
 
@@ -155,9 +206,10 @@ export async function createTimeProposal(meetingRequestId: string, proposedByUse
 }
 
 export async function listMeetingRequestsForUser(userId: string) {
+  // Include time proposals as a nested relation so the UI can show proposed times
   const { data, error } = await ensureSupabase()
     .from("meeting_requests_eif")
-    .select("*")
+    .select('*, time_proposals_eif(*)')
     .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
     .order("created_at", { ascending: false });
   if (error) throw error;
@@ -167,7 +219,7 @@ export async function listMeetingRequestsForUser(userId: string) {
 export async function getMeetingRequestById(meetingId: string) {
   const { data, error } = await ensureSupabase()
     .from('meeting_requests_eif')
-    .select('*')
+    .select('*, time_proposals_eif(*)')
     .eq('id', meetingId)
     .maybeSingle();
   if (error) throw error;
@@ -183,6 +235,18 @@ export async function updateMeetingRequest(meetingId: string, updates: Record<st
     .maybeSingle();
   if (error) throw error;
   return data;
+}
+
+// Delete upcoming meetings between a pair of participants (if any)
+export async function deleteFutureMeetingsForParticipants(participantA: string, participantB: string) {
+  const sup = ensureSupabase();
+  const now = new Date().toISOString();
+  // Delete meetings where the pair matches either ordering
+  const { data, error } = await sup.from('meetings_eif').delete().or(
+    `and(participant_a_id.eq.${participantA},participant_b_id.eq.${participantB}),and(participant_a_id.eq.${participantB},participant_b_id.eq.${participantA})`
+  ).gte('start_time', now).select('*');
+  if (error) throw error;
+  return data ?? [];
 }
 
 // Record a profile view event
@@ -377,6 +441,17 @@ export async function markNotificationAsRead(notificationId: string, userId: str
   return data;
 }
 
+// Create a notification for a user
+export async function createNotification(userId: string, type: string, data: any) {
+  const { data: d, error } = await ensureSupabase()
+    .from('notifications_eif')
+    .insert({ user_id: userId, type, data })
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return d;
+}
+
 // Create a confirmed meeting record linked to an existing meeting request
 export async function createMeetingFromRequest(meetingRequestId: string, startTime: string, endTime: string, timezone = 'UTC', location_type?: string, location_url?: string) {
   const sup = ensureSupabase();
@@ -411,3 +486,171 @@ export async function updateMeetingLocation(meetingId: string, location_type?: s
   if (error) throw error;
   return data;
 }
+
+// Delete meeting by id
+export async function deleteMeetingById(meetingId: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('meetings_eif').delete().eq('id', meetingId).select('*').maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Find a meeting_request that matches the given participant ids and start_time (optional)
+export async function findMeetingRequestByParticipants(participantA: string, participantB: string, startTime?: string | null) {
+  const sup = ensureSupabase();
+  // Search for meeting_requests where the pair of users match either ordering. Optionally match start_time in proposals or created
+  let q = sup.from('meeting_requests_eif').select('*').or(
+    `and(from_user_id.eq.${participantA},to_user_id.eq.${participantB}),and(from_user_id.eq.${participantB},to_user_id.eq.${participantA})`
+  );
+  const { data, error } = await q.order('created_at', { ascending: false }).limit(1);
+  if (error) throw error;
+  return (data && data.length > 0) ? data[0] : null;
+}
+
+// Delete a time proposal by id
+export async function deleteTimeProposalById(proposalId: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('time_proposals_eif').delete().eq('id', proposalId).select('*').maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Create a message between two users
+export async function createMessage(fromUserId: string, toUserId: string, content: string, isEncrypted = false) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('messages_eif').insert({ from_user_id: fromUserId, to_user_id: toUserId, content, is_encrypted: isEncrypted }).select('*').maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// List messages between two users
+export async function listMessagesBetweenUsers(userA: string, userB: string, limit = 100) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('messages_eif').select('*').or(`and(from_user_id.eq.${userA},to_user_id.eq.${userB}),and(from_user_id.eq.${userB},to_user_id.eq.${userA})`).order('created_at', { ascending: true }).limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+// Availability and Meeting Arrangement Functions
+
+export async function createUserAvailabilitySchedule(userId: string, dayOfWeek: number, availableFrom: string, availableTo: string, timezone: string = 'UTC') {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
+    .from('user_availability_schedules_eif')
+    .upsert(
+      { user_id: userId, day_of_week: dayOfWeek, available_from: availableFrom, available_to: availableTo, timezone },
+      { onConflict: 'user_id, day_of_week' }
+    )
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function getUserAvailabilitySchedule(userId: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
+    .from('user_availability_schedules_eif')
+    .select('*')
+    .eq('user_id', userId)
+    .order('day_of_week', { ascending: true });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function recordIdleHours(userId: string, startTime: string, endTime: string, timezone: string = 'UTC', notes?: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
+    .from('user_idle_hours_eif')
+    .insert({ user_id: userId, start_time: startTime, end_time: endTime, timezone, notes, is_available: true })
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function getUserIdleHours(userId: string, startTime?: string, endTime?: string) {
+  const sup = ensureSupabase();
+  let query = sup.from('user_idle_hours_eif').select('*').eq('user_id', userId).eq('is_available', true);
+  
+  if (startTime) {
+    query = query.gte('start_time', startTime);
+  }
+  if (endTime) {
+    query = query.lte('end_time', endTime);
+  }
+  
+  const { data, error } = await query.order('start_time', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function getMeetingArrangementPreferences(userId: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
+    .from('meeting_arrangement_preferences_eif')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateMeetingArrangementPreferences(userId: string, updates: Record<string, any>) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
+    .from('meeting_arrangement_preferences_eif')
+    .update(updates)
+    .eq('user_id', userId)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function createAutomaticMeetingMatch(initiatorUserId: string, matchUserId: string, matchScore: number = 0, suggestedTimeFrom?: string, suggestedTimeTo?: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
+    .from('automatic_meeting_matches_eif')
+    .insert({
+      initiator_user_id: initiatorUserId,
+      match_user_id: matchUserId,
+      match_score: matchScore,
+      suggested_time_from: suggestedTimeFrom,
+      suggested_time_to: suggestedTimeTo,
+      status: 'PENDING',
+    })
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function getAutomaticMeetingMatches(userId: string, status?: string) {
+  const sup = ensureSupabase();
+  let query = sup
+    .from('automatic_meeting_matches_eif')
+    .select('*')
+    .or(`initiator_user_id.eq.${userId},match_user_id.eq.${userId}`);
+  
+  if (status) {
+    query = query.eq('status', status);
+  }
+  
+  const { data, error } = await query.order('created_at', { ascending: false });
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function updateAutomaticMeetingMatch(matchId: string, updates: Record<string, any>) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
+    .from('automatic_meeting_matches_eif')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', matchId)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+

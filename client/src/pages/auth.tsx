@@ -23,6 +23,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Loader2, ArrowLeft, CheckCircle2, Mail } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -37,7 +38,38 @@ const registerSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
   password: z.string().min(8, { message: "Password must be at least 8 characters" }),
   role: z.enum(["investor", "company"]),
-});
+  automatic_availability: z.boolean().default(false),
+  availability_from: z.string().optional(),
+  availability_to: z.string().optional(),
+  availability_timezone: z.string().default("UTC"),
+  arrange_meetings: z.boolean().default(false),
+}).refine(
+  (data) => {
+    // If automatic_availability is true, both dates are required
+    if (data.automatic_availability) {
+      return data.availability_from && data.availability_to;
+    }
+    return true;
+  },
+  {
+    message: "Available From and Available To are required when Automatic Availability is enabled",
+    path: ["availability_from"],
+  }
+).refine(
+  (data) => {
+    // If both dates are provided, To must be after From
+    if (data.availability_from && data.availability_to) {
+      const fromTime = new Date(data.availability_from);
+      const toTime = new Date(data.availability_to);
+      return toTime > fromTime;
+    }
+    return true;
+  },
+  {
+    message: "Available To must be after Available From",
+    path: ["availability_to"],
+  }
+);
 
 const forgotPasswordSchema = z.object({
   email: z.string().email({ message: "Invalid email address" }),
@@ -58,6 +90,7 @@ export default function AuthPage() {
   const [resetMode, setResetMode] = useState<'idle' | 'request' | 'reset' | 'success'>('idle');
   const [showForgotDialog, setShowForgotDialog] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
+  const [registerError, setRegisterError] = useState<string | null>(null);
   const [resetToken, setResetToken] = useState('');
   const { toast } = useToast();
 
@@ -78,7 +111,12 @@ export default function AuthPage() {
       name: "", 
       email: "", 
       password: "", 
-      role: defaultRole as "investor" | "company" 
+      role: defaultRole as "investor" | "company",
+      automatic_availability: false,
+      availability_from: "",
+      availability_to: "",
+      availability_timezone: "UTC",
+      arrange_meetings: false,
     },
   });
 
@@ -130,6 +168,7 @@ export default function AuthPage() {
 
   async function onRegister(values: z.infer<typeof registerSchema>) {
     setIsLoading(true);
+    setRegisterError(null); // Clear any previous errors
     try {
       const res = await fetch('/api/users', {
         method: 'POST',
@@ -138,12 +177,47 @@ export default function AuthPage() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || 'Registration failed');
-      // After registering we require email verification. Notify the user and don't auto-login.
-      toast({ title: 'Check your email', description: 'A verification link has been sent. Please verify your email before logging in.' });
-      registerForm.reset();
+      
+      if (!res.ok) {
+        const errorMessage = data?.message || 'Registration failed';
+        setRegisterError(errorMessage);
+        toast({ 
+          title: 'Registration failed', 
+          description: errorMessage,
+          variant: 'destructive' 
+        });
+        return; // Exit without clearing form
+      }
+
+      // Success: Show verification message and reset form
+      toast({ 
+        title: 'Success!', 
+        description: 'A verification link has been sent to your email. Please verify your email before logging in.' 
+      });
+      registerForm.reset({
+        name: "",
+        email: "",
+        password: "",
+        role: defaultRole as "investor" | "company",
+        automatic_availability: false,
+        availability_from: "",
+        availability_to: "",
+        availability_timezone: "UTC",
+        arrange_meetings: false,
+      });
+      
+      // Optional: Redirect to verification page or login page
+      setTimeout(() => {
+        setLocation('/auth?mode=login');
+      }, 2000);
     } catch (err: any) {
-      toast({ title: 'Registration failed', description: err?.message ?? 'Unable to register' });
+      const errorMessage = err?.message ?? 'Unable to register';
+      setRegisterError(errorMessage);
+      toast({ 
+        title: 'Registration failed', 
+        description: errorMessage,
+        variant: 'destructive' 
+      });
     } finally {
       setIsLoading(false);
     }
@@ -555,6 +629,116 @@ export default function AuthPage() {
                       </FormItem>
                     )}
                   />
+
+                  {/* Error display */}
+                  {registerError && (
+                    <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20">
+                      <p className="text-sm text-destructive">{registerError}</p>
+                    </div>
+                  )}
+
+                  {/* Feature A: Automatic Availability */}
+                  <FormField
+                    control={registerForm.control}
+                    name="automatic_availability"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center space-x-2 space-y-0">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="border-white/20"
+                          />
+                        </FormControl>
+                        <FormLabel className="font-normal cursor-pointer">
+                          Enable Automatic Availability
+                        </FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
+                  {/* Conditional fields for automatic availability */}
+                  {registerForm.watch("automatic_availability") && (
+                    <div className="space-y-3 p-3 bg-white/5 rounded-md border border-white/10">
+                      <FormField
+                        control={registerForm.control}
+                        name="availability_from"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Available From</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="datetime-local" 
+                                {...field} 
+                                className="bg-white/5 border-white/10" 
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={registerForm.control}
+                        name="availability_to"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Available To</FormLabel>
+                            <FormControl>
+                              <Input 
+                                type="datetime-local" 
+                                {...field} 
+                                className="bg-white/5 border-white/10" 
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={registerForm.control}
+                        name="availability_timezone"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Timezone</FormLabel>
+                            <FormControl>
+                              <select 
+                                {...field}
+                                className="w-full bg-white/5 border border-white/10 rounded-md p-2 text-sm"
+                              >
+                                <option value="UTC">UTC</option>
+                                <option value="EST">EST</option>
+                                <option value="CST">CST</option>
+                                <option value="MST">MST</option>
+                                <option value="PST">PST</option>
+                              </select>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  )}
+
+                  {/* Feature B: Managed Meeting Opt-in */}
+                  <FormField
+                    control={registerForm.control}
+                    name="arrange_meetings"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center space-x-2 space-y-0">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            className="border-white/20"
+                          />
+                        </FormControl>
+                        <FormLabel className="font-normal cursor-pointer">
+                          Interested in Managed Meetings?
+                        </FormLabel>
+                      </FormItem>
+                    )}
+                  />
+
                   <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={isLoading}>
                     {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : "Create Account"}
                   </Button>
