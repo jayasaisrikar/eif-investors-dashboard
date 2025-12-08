@@ -18,6 +18,7 @@ interface MeetingRequest {
   status: string;
   created_at: string;
   updated_at: string;
+  time_proposals_eif?: any[];
 }
 
 export default function InvestorMeetings() {
@@ -70,6 +71,40 @@ export default function InvestorMeetings() {
     } catch (err: any) {
       console.error('update meeting error', err);
       toast({ title: 'Update Failed', description: 'Could not update meeting status.' });
+    }
+  };
+
+  const handleAcceptProposal = async (meetingId: string, proposalId: string) => {
+    try {
+      const res = await fetch(`/api/meetings/requests/${meetingId}/proposals/${proposalId}/accept`, { method: 'POST', credentials: 'include' });
+      if (!res.ok) throw new Error('failed to accept proposal');
+      const data = await res.json();
+      toast({ title: 'Proposal Accepted', description: 'Meeting rescheduled.' });
+      // refresh meetings
+      const userRes = await fetch('/api/users/me', { credentials: 'include' });
+      const user = await userRes.json();
+      const meRes = await fetch(`/api/meetings/requests/${user.id}`, { credentials: 'include' });
+      const meetingsData = await meRes.json();
+      setMeetings(meetingsData || []);
+    } catch (err: any) {
+      console.error('accept proposal error', err);
+      toast({ title: 'Accept Failed', description: 'Could not accept proposal.' });
+    }
+  };
+
+  const handleDeclineProposal = async (meetingId: string, proposalId: string) => {
+    try {
+      const res = await fetch(`/api/meetings/requests/${meetingId}/proposals/${proposalId}/decline`, { method: 'POST', credentials: 'include' });
+      if (!res.ok) throw new Error('failed to decline proposal');
+      toast({ title: 'Proposal Declined', description: 'The proposer has been notified.' });
+      const userRes = await fetch('/api/users/me', { credentials: 'include' });
+      const user = await userRes.json();
+      const meRes = await fetch(`/api/meetings/requests/${user.id}`, { credentials: 'include' });
+      const meetingsData = await meRes.json();
+      setMeetings(meetingsData || []);
+    } catch (err: any) {
+      console.error('decline proposal error', err);
+      toast({ title: 'Decline Failed', description: 'Could not decline proposal.' });
     }
   };
 
@@ -133,6 +168,26 @@ export default function InvestorMeetings() {
                           <div className="flex items-center gap-2">
                             <Video className="w-4 h-4" /> Video Meeting
                           </div>
+                          {meeting.time_proposals_eif && meeting.time_proposals_eif.length > 0 && (
+                            <div className="mt-2">
+                              <h4 className="text-sm font-medium">Reschedule Proposals</h4>
+                              <div className="space-y-2 mt-2">
+                                {meeting.time_proposals_eif.map((p: any) => (
+                                  <div key={p.id} className="flex items-center justify-between gap-2 bg-muted p-2 rounded">
+                                    <div className="text-sm">{new Date(p.start_time).toLocaleString()} — {new Date(p.end_time).toLocaleString()} <span className="text-xs text-muted-foreground">({p.status})</span></div>
+                                    <div className="flex gap-2">
+                                      {currentUserId && p.proposed_by_user_id !== currentUserId && p.status === 'PENDING' && (
+                                        <>
+                                          <Button size="sm" variant="outline" onClick={() => handleDeclineProposal(meeting.id, p.id)}>Decline</Button>
+                                          <Button size="sm" onClick={() => handleAcceptProposal(meeting.id, p.id)}>Accept</Button>
+                                        </>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

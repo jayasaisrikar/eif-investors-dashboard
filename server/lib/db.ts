@@ -205,6 +205,20 @@ export async function createTimeProposal(meetingRequestId: string, proposedByUse
   return data;
 }
 
+export async function getTimeProposalById(proposalId: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('time_proposals_eif').select('*').eq('id', proposalId).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function updateTimeProposalStatus(proposalId: string, status: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('time_proposals_eif').update({ status }).eq('id', proposalId).select('*').maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 export async function listMeetingRequestsForUser(userId: string) {
   // Include time proposals as a nested relation so the UI can show proposed times
   const { data, error } = await ensureSupabase()
@@ -295,18 +309,18 @@ export async function getCompanyOverviewMetrics(userId: string) {
   ]).then((res: any[]) => res.map(r => ({ count: r.count ?? 0 })));
 
   // saved by (favorites) - total count
-  const { data: favoritesData, error: favErr } = await sup.from('favorites_eif').select('id', { count: 'exact' }).eq('favorite_user_id', userId);
+  const { data: favoritesData, count: favoritesCount, error: favErr } = await sup.from('favorites_eif').select('id', { count: 'exact' }).eq('favorite_user_id', userId);
   if (favErr) throw favErr;
-  const savedByCount = favoritesData?.count ?? 0;
+  const savedByCount = favoritesCount ?? (favoritesData?.length ?? 0);
 
   // meeting requests (total and pending)
-  const { data: meetingsData, error: meetErr } = await sup.from('meeting_requests_eif').select('id,status', { count: 'exact' }).or(`to_user_id.eq.${userId}`).gte('created_at', startPrevious.toISOString());
+  const { data: meetingsData, count: meetingsCount, error: meetErr } = await sup.from('meeting_requests_eif').select('id,status', { count: 'exact' }).or(`to_user_id.eq.${userId}`).gte('created_at', startPrevious.toISOString());
   if (meetErr) throw meetErr;
   // compute pending separately
-  const { data: pendingData, error: pendErr } = await sup.from('meeting_requests_eif').select('id', { count: 'exact' }).eq('to_user_id', userId).eq('status', 'PENDING');
+  const { data: pendingData, count: pendingCount, error: pendErr } = await sup.from('meeting_requests_eif').select('id', { count: 'exact' }).eq('to_user_id', userId).eq('status', 'PENDING');
   if (pendErr) throw pendErr;
-  const meetingRequestsCount = meetingsData?.length ?? 0;
-  const meetingRequestsPending = pendingData?.count ?? 0;
+  const meetingRequestsCount = meetingsCount ?? (meetingsData?.length ?? 0);
+  const meetingRequestsPending = pendingCount ?? (pendingData?.length ?? 0);
 
   function percentChange(current: number, previous: number) {
     if (previous === 0) return current === 0 ? 0 : 100;
@@ -316,7 +330,7 @@ export async function getCompanyOverviewMetrics(userId: string) {
   return {
     profileViews: { current: Number(viewsCurrent), previous: Number(viewsPrevious), changePercent: percentChange(Number(viewsCurrent), Number(viewsPrevious)) },
     deckDownloads: { current: Number(downloadsCurrent), previous: Number(downloadsPrevious), changePercent: percentChange(Number(downloadsCurrent), Number(downloadsPrevious)) },
-    savedBy: { total: Number(savedByCount) },
+    savedBy: { total: Number(favoritesCount ?? savedByCount) },
     meetingRequests: { total: Number(meetingRequestsCount), pending: Number(meetingRequestsPending) },
   };
 }
@@ -418,13 +432,14 @@ export async function getUpcomingMeetings(userId: string, limit = 5) {
 export default supabaseClient as SupabaseClient;
 
 // Notifications helpers
-export async function listNotificationsForUser(userId: string, limit = 20) {
-  const { data, error } = await ensureSupabase()
+export async function listNotificationsForUser(userId: string, limit = 20, offset = 0) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup
     .from('notifications_eif')
     .select('*')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
-    .limit(limit);
+    .range(offset, Math.max(0, offset + limit - 1));
   if (error) throw error;
   return data ?? [];
 }
@@ -439,6 +454,37 @@ export async function markNotificationAsRead(notificationId: string, userId: str
     .maybeSingle();
   if (error) throw error;
   return data;
+}
+
+export async function updateNotificationIsRead(notificationId: string, userId: string, isRead: boolean) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('notifications_eif')
+    .update({ is_read: !!isRead })
+    .eq('id', notificationId)
+    .eq('user_id', userId)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function deleteNotification(notificationId: string, userId: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('notifications_eif')
+    .delete()
+    .eq('id', notificationId)
+    .eq('user_id', userId)
+    .select('*')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function markAllNotificationsRead(userId: string) {
+  const sup = ensureSupabase();
+  const { data, error } = await sup.from('notifications_eif').update({ is_read: true }).eq('user_id', userId).select('*');
+  if (error) throw error;
+  return data ?? [];
 }
 
 // Create a notification for a user
@@ -477,6 +523,20 @@ export async function createMeetingFromRequest(meetingRequestId: string, startTi
   const { data, error } = await sup.from('meetings_eif').insert(payload).select('*').maybeSingle();
   if (error) throw error;
   return data;
+}
+
+// List upcoming meetings for a user (as participant A or B)
+export async function listMeetingsForUser(userId: string, limit = 50) {
+  const sup = ensureSupabase();
+  const now = new Date().toISOString();
+  const { data, error } = await sup.from('meetings_eif')
+    .select('*')
+    .or(`participant_a_id.eq.${userId},participant_b_id.eq.${userId}`)
+    .gte('start_time', now)
+    .order('start_time', { ascending: true })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
 }
 
 // Optional: update an existing meeting record's location/url

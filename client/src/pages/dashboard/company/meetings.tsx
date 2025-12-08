@@ -7,6 +7,17 @@ import { Calendar as CalendarIcon, Clock, MapPin, Video, AlertCircle } from "luc
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState } from "react";
+import { DayPicker } from 'react-day-picker';
+import 'react-day-picker/dist/style.css';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+  DialogClose,
+} from "@/components/ui/dialog";
 
 interface MeetingRequest {
   id: string;
@@ -18,11 +29,13 @@ interface MeetingRequest {
   status: string;
   created_at: string;
   updated_at: string;
+  time_proposals_eif?: any[];
 }
 
 export default function CompanyMeetings() {
   const { toast } = useToast();
   const [meetings, setMeetings] = useState<MeetingRequest[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,12 +46,24 @@ export default function CompanyMeetings() {
         const userRes = await fetch('/api/users/me', { credentials: 'include' });
         if (!userRes.ok) throw new Error('Could not get current user');
         const user = await userRes.json();
+        setCurrentUserId(user.id ?? null);
 
         // Get meeting requests for this user
         const meRes = await fetch(`/api/meetings/requests/${user.id}`, { credentials: 'include' });
         if (!meRes.ok) throw new Error('Could not fetch meetings');
         const data = await meRes.json();
         setMeetings(data || []);
+
+        // also fetch actual meeting records to get join URLs
+        try {
+          const recRes = await fetch('/api/users/me/meetings', { credentials: 'include' });
+          if (recRes.ok) {
+            const recs = await recRes.json();
+            setMeetingRecords(recs || []);
+          }
+        } catch (e) {
+          // ignore
+        }
       } catch (err: any) {
         console.error('fetch meetings error', err);
         setError(err?.message || 'Failed to load meetings');
@@ -56,6 +81,170 @@ export default function CompanyMeetings() {
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
+  };
+
+  const handleUpdateMeeting = async (id: string, status: string) => {
+    try {
+      const res = await fetch(`/api/meetings/requests/${id}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error('failed to update meeting');
+      const updated = await res.json();
+      setMeetings(prev => prev.map(m => (m.id === id ? updated : m)));
+      toast({ title: 'Meeting Updated', description: `Meeting ${status.toLowerCase()}` });
+    } catch (err: any) {
+      console.error('update meeting error', err);
+      toast({ title: 'Update Failed', description: 'Could not update meeting status.' });
+    }
+  };
+
+  // Reschedule dialog state
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleMeetingId, setRescheduleMeetingId] = useState<string | null>(null);
+  const [startLocal, setStartLocal] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 0, 0, 0);
+    return d.toISOString().slice(0, 16);
+  });
+  const [endLocal, setEndLocal] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(9, 30, 0, 0);
+    return d.toISOString().slice(0, 16);
+  });
+  const [meetingRecords, setMeetingRecords] = useState<any[]>([]);
+  const [timezoneSel, setTimezoneSel] = useState<string>(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  // Scheduling modal (for Accept & Schedule)
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleMeetingId, setScheduleMeetingId] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
+  const [startTimeVal, setStartTimeVal] = useState<string>('09:00');
+  const [endTimeVal, setEndTimeVal] = useState<string>('09:30');
+  const timezones = [
+    'UTC','Europe/London','Europe/Berlin','America/New_York','America/Chicago','America/Los_Angeles','Asia/Kolkata','Asia/Singapore','Asia/Tokyo','Australia/Sydney'
+  ];
+
+  const openReschedule = (meetingId: string) => {
+    setRescheduleMeetingId(meetingId);
+    // Prefill using an existing meeting record if we have one
+    const req = meetings.find(m => m.id === meetingId);
+    if (req) {
+      const found = meetingRecords.find(r => (r.participant_a_id === req.from_user_id && r.participant_b_id === req.to_user_id) || (r.participant_a_id === req.to_user_id && r.participant_b_id === req.from_user_id));
+      if (found) {
+        const s = new Date(found.start_time);
+        const e = new Date(found.end_time);
+        const toLocal = (d: Date) => {
+          const tzOffset = d.getTimezoneOffset() * 60000;
+          const local = new Date(d.getTime() - tzOffset);
+          return local.toISOString().slice(0,16);
+        };
+        setStartLocal(toLocal(s));
+        setEndLocal(toLocal(e));
+        setTimezoneSel((found.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC');
+      }
+    }
+    setRescheduleOpen(true);
+  };
+
+  const openSchedule = (meetingId: string) => {
+    setScheduleMeetingId(meetingId);
+    // Prefill date/time from existing meeting record if available
+    const req = meetings.find(m => m.id === meetingId);
+    if (req) {
+      const found = meetingRecords.find(r => (r.participant_a_id === req.from_user_id && r.participant_b_id === req.to_user_id) || (r.participant_a_id === req.to_user_id && r.participant_b_id === req.from_user_id));
+      if (found) {
+        setSelectedDate(new Date(found.start_time));
+        const s = new Date(found.start_time);
+        const e = new Date(found.end_time);
+        const toTimeInput = (d: Date) => d.toISOString().slice(11,16);
+        setStartTimeVal(toTimeInput(s));
+        setEndTimeVal(toTimeInput(e));
+        setTimezoneSel((found.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC');
+      } else {
+        // default to tomorrow
+        const d = new Date(); d.setDate(d.getDate()+1); setSelectedDate(d);
+      }
+    }
+    setScheduleOpen(true);
+  };
+
+  const submitSchedule = async () => {
+    if (!scheduleMeetingId || !selectedDate) return;
+    try {
+      // construct ISO start/end using selectedDate + time inputs
+      const [sh, sm] = startTimeVal.split(':').map(Number);
+      const [eh, em] = endTimeVal.split(':').map(Number);
+      const start = new Date(selectedDate);
+      start.setHours(sh, sm, 0, 0);
+      const end = new Date(selectedDate);
+      end.setHours(eh, em, 0, 0);
+      const tz = timezoneSel || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+      const res = await fetch(`/api/meetings/requests/${scheduleMeetingId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'CONFIRMED', start_time: start.toISOString(), end_time: end.toISOString(), timezone: tz }),
+      });
+      if (!res.ok) throw new Error('failed to confirm meeting');
+      const body = await res.json();
+      // update UI: replace meeting request and add meeting record if returned
+      if (body.meetingRequest) {
+        setMeetings(prev => prev.map(m => (m.id === scheduleMeetingId ? body.meetingRequest : m)));
+      }
+      if (body.meeting) {
+        // refresh meeting records
+        try {
+          const recRes = await fetch('/api/users/me/meetings', { credentials: 'include' });
+          if (recRes.ok) setMeetingRecords(await recRes.json());
+        } catch (e) {}
+      }
+      toast({ title: 'Meeting Scheduled', description: 'Meeting confirmed and calendar event created (if configured).' });
+      setScheduleOpen(false);
+    } catch (err: any) {
+      console.error('schedule error', err);
+      toast({ title: 'Schedule Failed', description: 'Could not schedule meeting.' });
+    }
+  };
+
+  const submitReschedule = async () => {
+    if (!rescheduleMeetingId) return;
+    try {
+      const start = new Date(startLocal).toISOString();
+      const end = new Date(endLocal).toISOString();
+      const tz = timezoneSel || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const res = await fetch(`/api/meetings/requests/${rescheduleMeetingId}/proposals`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ start_time: start, end_time: end, timezone: tz }),
+      });
+      if (!res.ok) throw new Error('failed to create proposal');
+      const proposal = await res.json();
+      toast({ title: 'Reschedule Requested', description: 'Investor notified of new proposed time.' });
+      setRescheduleOpen(false);
+      // Refresh meetings list and meeting records
+      try {
+        const userRes = await fetch('/api/users/me', { credentials: 'include' });
+        const user = await userRes.json();
+        const meRes = await fetch(`/api/meetings/requests/${user.id}`, { credentials: 'include' });
+        const data = await meRes.json();
+        setMeetings(data || []);
+        try {
+          const recRes = await fetch('/api/users/me/meetings', { credentials: 'include' });
+          if (recRes.ok) setMeetingRecords(await recRes.json());
+        } catch (e) {}
+      } catch (e) {
+        // ignore
+      }
+    } catch (err: any) {
+      console.error('reschedule error', err);
+      toast({ title: 'Reschedule Failed', description: 'Could not send reschedule request.' });
+    }
   };
 
   return (
@@ -125,11 +314,18 @@ export default function CompanyMeetings() {
                         <Button 
                           variant="outline" 
                           className="border-white/10 hover:bg-white/5"
-                          onClick={() => toast({ title: "Reschedule Request", description: "Availability options sent to investor." })}
+                          onClick={() => openReschedule(meeting.id)}
                         >
                           Reschedule
                         </Button>
-                        <Button className="bg-secondary hover:bg-secondary/90 text-white">Join Call</Button>
+                        <Button className="bg-secondary hover:bg-secondary/90 text-white" onClick={() => {
+                          const found = meetingRecords.find(r => (r.participant_a_id === meeting.from_user_id && r.participant_b_id === meeting.to_user_id) || (r.participant_a_id === meeting.to_user_id && r.participant_b_id === meeting.from_user_id));
+                          if (found && found.location_url) {
+                            window.open(found.location_url, '_blank');
+                          } else {
+                            toast({ title: 'No meeting link', description: 'No meeting URL available yet.' });
+                          }
+                        }}>Join Call</Button>
                       </div>
                     </div>
                   </CardContent>
@@ -160,8 +356,8 @@ export default function CompanyMeetings() {
                         <Badge variant="outline" className="text-yellow-500 border-yellow-500/20 bg-yellow-500/10">NEEDS YOUR RESPONSE</Badge>
                       </div>
                       <div className="flex gap-2 ml-auto md:ml-0">
-                        <Button variant="outline" className="border-white/10">Decline</Button>
-                        <Button className="bg-secondary hover:bg-secondary/90">Accept & Schedule</Button>
+                        <Button variant="outline" className="border-white/10" onClick={() => handleUpdateMeeting(meeting.id, 'DECLINED')}>Decline</Button>
+                        <Button className="bg-secondary hover:bg-secondary/90" onClick={() => openSchedule(meeting.id)}>Accept & Schedule</Button>
                       </div>
                     </CardContent>
                   </Card>
@@ -170,6 +366,68 @@ export default function CompanyMeetings() {
             )}
           </TabsContent>
         </Tabs>
+        <Dialog open={rescheduleOpen} onOpenChange={setRescheduleOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Request Reschedule</DialogTitle>
+              <DialogDescription>Pick a new date and time to propose to the participant.</DialogDescription>
+            </DialogHeader>
+
+            <div className="grid grid-cols-1 gap-3 mt-4">
+              <label className="text-sm">Start</label>
+              <input type="datetime-local" value={startLocal} onChange={(e) => setStartLocal(e.target.value)} className="w-full p-2 rounded bg-input text-sm" />
+              <label className="text-sm">End</label>
+              <input type="datetime-local" value={endLocal} onChange={(e) => setEndLocal(e.target.value)} className="w-full p-2 rounded bg-input text-sm" />
+              <label className="text-sm">Timezone</label>
+              <select value={timezoneSel} onChange={(e) => setTimezoneSel(e.target.value)} className="w-full p-2 rounded bg-input text-sm">
+                <option value={Intl.DateTimeFormat().resolvedOptions().timeZone}>{Intl.DateTimeFormat().resolvedOptions().timeZone}</option>
+                <option value="UTC">UTC</option>
+                <option value="Europe/London">Europe/London</option>
+                <option value="America/New_York">America/New_York</option>
+                <option value="Asia/Kolkata">Asia/Kolkata</option>
+              </select>
+            </div>
+
+            <DialogFooter>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setRescheduleOpen(false)}>Cancel</Button>
+                <Button onClick={submitReschedule}>Send Proposal</Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={scheduleOpen} onOpenChange={setScheduleOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Schedule Meeting</DialogTitle>
+              <DialogDescription>Pick a date, time and timezone for this meeting.</DialogDescription>
+            </DialogHeader>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <div>
+                <label className="text-sm">Date</label>
+                <DayPicker mode="single" selected={selectedDate} onSelect={(d) => setSelectedDate(d ?? undefined)} />
+              </div>
+              <div>
+                <label className="text-sm">Start time</label>
+                <input type="time" value={startTimeVal} onChange={(e) => setStartTimeVal(e.target.value)} className="w-full p-2 rounded bg-input text-sm" />
+                <label className="text-sm mt-2">End time</label>
+                <input type="time" value={endTimeVal} onChange={(e) => setEndTimeVal(e.target.value)} className="w-full p-2 rounded bg-input text-sm" />
+                <label className="text-sm mt-2">Timezone</label>
+                <select value={timezoneSel} onChange={(e) => setTimezoneSel(e.target.value)} className="w-full p-2 rounded bg-input text-sm">
+                  {timezones.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setScheduleOpen(false)}>Cancel</Button>
+                <Button onClick={submitSchedule}>Confirm & Create</Button>
+              </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </DashboardLayout>
   );

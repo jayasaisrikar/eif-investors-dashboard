@@ -74,3 +74,22 @@ Notes:
 -- If you want to manage schema through migrations, prefer the Supabase CLI or
   SQL migrations; the included `sql/schema_eif.sql` is a practical starting point.
 
+Notifications API
+------------------
+
+This project supplies in-app notifications backed by the `notifications_eif` table. New endpoints:
+
+- GET `/api/notifications?limit=20&offset=0` — List notifications for the authenticated user (default limit = 20, offset = 0)
+- PATCH `/api/notifications/:id` — Accepts JSON body `{ is_read: true|false }` to set the read state
+- PATCH `/api/notifications/:id/read` — Convenience endpoint to mark a single notification read
+- POST `/api/notifications/mark-all-read` — Mark all notifications read for authenticated user
+- DELETE `/api/notifications/:id` — Delete a single notification for the user
+
+Client-side pages and usage
+--------------------------
+
+- The dashboard header includes a bell icon with unread counts and a compact dropdown. The dropdown allows marking notifications read and includes a "View all" link that navigates to `/notifications`.
+- A new dedicated page `/dashboard/notifications` (and redirect `/notifications`) lists all notifications, supports pagination, filtering (unread only) and actions (mark read/unread, delete, mark all read).
+
+For real-time updates: the dashboard polls the server every 20 seconds and also listens for a `notifications-updated` browser event that triggers a refresh.
+

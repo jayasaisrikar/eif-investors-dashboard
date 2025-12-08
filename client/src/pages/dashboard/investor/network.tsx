@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Search, Mail, Linkedin, ExternalLink, MoreHorizontal, Users } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState } from "react";
+import { useLocation } from 'wouter';
 
 interface Contact {
   id: string;
@@ -140,6 +141,8 @@ export default function InvestorNetwork() {
     (c.company?.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
+  const [, setLocation] = useLocation();
+
   return (
     <DashboardLayout role="investor">
       <div className="space-y-6">
@@ -173,7 +176,7 @@ export default function InvestorNetwork() {
               <p className="text-muted-foreground text-center max-w-md">
                 Your network will grow as you connect with companies. Request meetings to start building your network.
               </p>
-              <Button className="mt-4" onClick={() => window.location.href = '/dashboard/investor/discover'}>
+              <Button className="mt-4" onClick={() => setLocation('/dashboard/investor/discover')}>
                 Discover Companies
               </Button>
             </CardContent>

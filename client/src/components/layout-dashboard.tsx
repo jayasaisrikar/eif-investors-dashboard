@@ -80,6 +80,11 @@ export function DashboardLayout({
       }
     };
     fetchNotifications();
+    const poll = setInterval(fetchNotifications, 20_000);
+
+    const onNotificationsUpdated = () => fetchNotifications();
+    window.addEventListener('notifications-updated', onNotificationsUpdated);
+    return () => { clearInterval(poll); window.removeEventListener('notifications-updated', onNotificationsUpdated); };
   }, []);
 
   const navItems = {
@@ -186,14 +191,20 @@ export function DashboardLayout({
                     <DropdownMenuItem key={n.id} onClick={async () => {
                       try {
                         if (!n.is_read) {
-                          const r = await fetch(`/api/notifications/${n.id}/read`, { method: 'PATCH', credentials: 'include' });
+                          const r = await fetch(`/api/notifications/${n.id}`, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_read: true }) });
                           if (r.ok) {
                             setNotifications(prev => prev.map(x => x.id === n.id ? { ...x, is_read: true } : x));
                             setUnreadCount(c => Math.max(0, c - 1));
                           }
                         }
-                        // optionally navigate or show details
-                        toast({ title: n.type ?? 'Notification', description: n.data?.message ?? 'Opened notification' });
+                        // optionally navigate or show details; prefer navigating to related pages
+                        if (n.data?.meeting_request_id) {
+                          setLocation('/dashboard/meetings');
+                        } else if (n.data?.company_id) {
+                          setLocation(`/company/${n.data.company_id}`);
+                        } else {
+                          toast({ title: n.type ?? 'Notification', description: n.data?.message ?? 'Opened notification' });
+                        }
                       } catch (err) {
                         console.error('mark read error', err);
                       }
@@ -207,7 +218,19 @@ export function DashboardLayout({
                   ))}
                 </div>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => window.location.href = '/dashboard/notifications'}>View all</DropdownMenuItem>
+                <DropdownMenuItem onClick={async () => {
+                  try {
+                    const r = await fetch('/api/notifications/mark-all-read', { method: 'POST', credentials: 'include' });
+                    if (r.ok) {
+                      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+                      setUnreadCount(0);
+                      window.dispatchEvent(new CustomEvent('notifications-updated'));
+                    }
+                  } catch (err) {
+                    console.error('mark all read error', err);
+                  }
+                }}>Mark all as read</DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocation('/notifications')}>View all</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             

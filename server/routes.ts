@@ -15,8 +15,15 @@ import {
   listMeetingRequestsForUser,
   getMeetingRequestById,
   updateMeetingRequest,
+  createNotification,
+  getTimeProposalById,
+  updateTimeProposalStatus,
+  deleteFutureMeetingsForParticipants,
+  listMeetingsForUser,
   listNotificationsForUser,
   markNotificationAsRead,
+  updateNotificationIsRead,
+  deleteNotification,
   searchCompanyProfiles,
   upsertCompanyProfile,
   upsertInvestorProfile,
@@ -27,6 +34,8 @@ import { recordProfileView, recordDeckDownload, getCompanyOverviewMetrics, getIn
 import { type InsertUser } from "@shared/schema";
 import { matchEngine } from "./lib/matchEngine.js";
 import { log } from "./index.js";
+import { registerOAuthRoutes } from "./oauth-routes.js";
+import supabase from './supabase.js';
 
 export async function registerRoutes(
   httpServer: Server,
@@ -34,6 +43,9 @@ export async function registerRoutes(
 ): Promise<Server> {
   // put application routes here
   // prefix all routes with /api
+
+  // Register OAuth routes
+  registerOAuthRoutes(app);
 
   // Health check
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
@@ -857,7 +869,9 @@ export async function registerRoutes(
       const userId = payload?.sub;
       if (!userId) return res.status(401).json({ message: 'invalid token' });
 
-      const items = await listNotificationsForUser(userId);
+      const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 20;
+      const offset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : 0;
+      const items = await listNotificationsForUser(userId, limit, offset);
       return res.json(items);
     } catch (err: any) {
       log(`list notifications error: ${err?.message ?? String(err)}`, 'routes');
@@ -882,6 +896,67 @@ export async function registerRoutes(
     } catch (err: any) {
       log(`mark notification read error: ${err?.message ?? String(err)}`, 'routes');
       return res.status(500).json({ message: 'error marking notification read' });
+    }
+  });
+
+  // Mark all notifications for current user as read
+  app.post('/api/notifications/mark-all-read', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const updated = await markAllNotificationsRead(userId);
+      return res.json({ updatedCount: updated.length });
+    } catch (err: any) {
+      log(`mark all notifications read error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error marking notifications read' });
+    }
+  });
+
+  // Set a notification read/unread state (body: { is_read: boolean })
+  app.patch('/api/notifications/:id', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const notificationId = req.params.id;
+      const updates = req.body as Record<string, any>;
+      if (typeof updates.is_read === 'undefined') return res.status(400).json({ message: 'is_read is required' });
+      const updated = await updateNotificationIsRead(notificationId, userId, !!updates.is_read);
+      return res.json(updated);
+    } catch (err: any) {
+      log(`update notification error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error updating notification' });
+    }
+  });
+
+  // Delete a notification
+  app.delete('/api/notifications/:id', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const notificationId = req.params.id;
+      const deleted = await deleteNotification(notificationId, userId);
+      return res.json(deleted);
+    } catch (err: any) {
+      log(`delete notification error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error deleting notification' });
     }
   });
 
@@ -971,6 +1046,267 @@ export async function registerRoutes(
       return res.status(500).json({ message: 'error updating meeting request' });
     }
   });
+
+  // Create a time proposal (reschedule request) for an existing meeting request
+  app.post('/api/meetings/requests/:id/proposals', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const meetingId = req.params.id;
+      const { start_time, end_time, timezone } = req.body as { start_time?: string; end_time?: string; timezone?: string };
+      if (!start_time || !end_time) return res.status(400).json({ message: 'start_time and end_time required' });
+
+      const meeting = await getMeetingRequestById(meetingId);
+      if (!meeting) return res.status(404).json({ message: 'meeting not found' });
+
+      // Only participants may propose new times
+      if (meeting.from_user_id !== userId && meeting.to_user_id !== userId) return res.status(403).json({ message: 'forbidden' });
+
+      const start = new Date(start_time).toISOString();
+      const end = new Date(end_time).toISOString();
+
+      const proposal = await createTimeProposal(meetingId, userId, start, end, timezone ?? 'UTC');
+
+      // Notify the other participant
+      const otherUserId = meeting.from_user_id === userId ? meeting.to_user_id : meeting.from_user_id;
+      try {
+        await createNotification(otherUserId, 'meeting_reschedule_requested', { meeting_request_id: meetingId, proposal_id: proposal.id, start, end });
+
+        // Try to email the recipient if possible
+        const recipient = await storage.getUser(otherUserId);
+        if (recipient?.email && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+          try {
+            const transporter = nodemailer.createTransport({
+              host: process.env.SMTP_HOST,
+              port: Number(process.env.SMTP_PORT || 587),
+              secure: (process.env.SMTP_SECURE || 'false') === 'true',
+              auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+            });
+            const from = process.env.SMTP_FROM || 'noreply@localhost';
+            const origin = (process.env.APP_URL && process.env.APP_URL.trim()) || `${req.protocol}://${req.get('host')}`;
+            const acceptUrl = `${origin.replace(/\/$/, '')}/dashboard/meetings?proposal=${proposal.id}&action=accept`;
+            const declineUrl = `${origin.replace(/\/$/, '')}/dashboard/meetings?proposal=${proposal.id}&action=decline`;
+            const html = `<p>The meeting has a new reschedule proposal for <strong>${new Date(start).toLocaleString()}</strong> to <strong>${new Date(end).toLocaleString()}</strong>.</p>
+              <p><a href="${acceptUrl}">Accept</a> | <a href="${declineUrl}">Decline</a></p>`;
+            await transporter.sendMail({ from, to: recipient.email, subject: 'Meeting reschedule requested', html });
+          } catch (e) {
+            log(`reschedule email send failed: ${(e as any)?.message ?? String(e)}`, 'routes');
+          }
+        }
+      } catch (e) {
+        log(`reschedule notification failed: ${(e as any)?.message ?? String(e)}`, 'routes');
+      }
+
+      return res.status(201).json(proposal);
+    } catch (err: any) {
+      log(`create time proposal error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error creating time proposal' });
+    }
+  });
+
+  // List upcoming confirmed meeting records for current user
+  app.get('/api/users/me/meetings', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const meetings = await listMeetingsForUser(userId, 200);
+      return res.json(meetings);
+    } catch (err: any) {
+      log(`list user meetings error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error listing meetings' });
+    }
+  });
+
+  // Accept a time proposal
+  app.post('/api/meetings/requests/:id/proposals/:proposalId/accept', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const meetingId = req.params.id;
+      const proposalId = req.params.proposalId;
+      const proposal = await getTimeProposalById(proposalId);
+      if (!proposal) return res.status(404).json({ message: 'proposal not found' });
+
+      const meeting = await getMeetingRequestById(meetingId);
+      if (!meeting) return res.status(404).json({ message: 'meeting not found' });
+
+      // Only the non-proposer may accept
+      if (proposal.proposed_by_user_id === userId) return res.status(403).json({ message: 'proposer cannot accept their own proposal' });
+
+      // Mark proposal accepted
+      await updateTimeProposalStatus(proposalId, 'ACCEPTED');
+
+      // Update meeting request status to CONFIRMED
+      await updateMeetingRequest(meetingId, { status: 'CONFIRMED' });
+
+      // Remove any future meetings between the participants to avoid duplicates
+      try {
+        await deleteFutureMeetingsForParticipants(proposal.proposed_by_user_id, (await getMeetingRequestById(meetingId))?.to_user_id ?? '');
+      } catch (e) {
+        log(`delete future meetings warning: ${(e as any)?.message ?? String(e)}`, 'routes');
+      }
+
+      // Create new meeting record for the accepted proposal
+      const meetingRec = await createMeetingFromRequest(meetingId, proposal.start_time, proposal.end_time, proposal.timezone ?? 'UTC');
+
+      // Notify proposer
+      try {
+        await createNotification(proposal.proposed_by_user_id, 'meeting_reschedule_accepted', { meeting_request_id: meetingId, proposal_id: proposalId, start: proposal.start_time, end: proposal.end_time, meeting: meetingRec });
+        const proposer = await storage.getUser(proposal.proposed_by_user_id);
+        if (proposer?.email && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT || 587),
+            secure: (process.env.SMTP_SECURE || 'false') === 'true',
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          });
+          const from = process.env.SMTP_FROM || 'noreply@localhost';
+          const html = `<p>Your reschedule proposal was accepted for <strong>${new Date(proposal.start_time).toLocaleString()}</strong> to <strong>${new Date(proposal.end_time).toLocaleString()}</strong>.</p>`;
+          await transporter.sendMail({ from, to: proposer.email, subject: 'Reschedule accepted', html });
+        }
+      } catch (e) {
+        log(`reschedule accept notify failed: ${(e as any)?.message ?? String(e)}`, 'routes');
+      }
+
+      return res.json({ meeting: meetingRec });
+    } catch (err: any) {
+      log(`accept proposal error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error accepting proposal' });
+    }
+  });
+
+  // Decline a time proposal
+  app.post('/api/meetings/requests/:id/proposals/:proposalId/decline', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      const jwtSecret = process.env.JWT_SECRET;
+      if (!jwtSecret) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, jwtSecret) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const meetingId = req.params.id;
+      const proposalId = req.params.proposalId;
+      const proposal = await getTimeProposalById(proposalId);
+      if (!proposal) return res.status(404).json({ message: 'proposal not found' });
+
+      // Only the non-proposer may decline
+      if (proposal.proposed_by_user_id === userId) return res.status(403).json({ message: 'proposer cannot decline their own proposal' });
+
+      await updateTimeProposalStatus(proposalId, 'DECLINED');
+
+      // Notify proposer
+      try {
+        await createNotification(proposal.proposed_by_user_id, 'meeting_reschedule_declined', { meeting_request_id: meetingId, proposal_id: proposalId });
+        const proposer = await storage.getUser(proposal.proposed_by_user_id);
+        if (proposer?.email && process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST,
+            port: Number(process.env.SMTP_PORT || 587),
+            secure: (process.env.SMTP_SECURE || 'false') === 'true',
+            auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          });
+          const from = process.env.SMTP_FROM || 'noreply@localhost';
+          const html = `<p>Your reschedule proposal for <strong>${new Date(proposal.start_time).toLocaleString()}</strong> was declined.</p>`;
+          await transporter.sendMail({ from, to: proposer.email, subject: 'Reschedule declined', html });
+        }
+      } catch (e) {
+        log(`reschedule decline notify failed: ${(e as any)?.message ?? String(e)}`, 'routes');
+      }
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      log(`decline proposal error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error declining proposal' });
+    }
+  });
+
+  // Automatic scheduler endpoints
+  // Admin: Run automatic scheduler to match and book meetings
+  app.post('/api/admin/scheduler/run', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      if (!process.env.JWT_SECRET) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as any;
+      const role = (payload?.role ?? '').toString().toLowerCase();
+      if (!role.includes('admin')) return res.status(403).json({ message: 'forbidden' });
+
+      // Import here to avoid circular dependency
+      const { AutomaticScheduler } = await import('./lib/automaticScheduler.js');
+      const scheduler = new AutomaticScheduler(supabase);
+      const results = await scheduler.runScheduler();
+
+      return res.json({ 
+        message: 'Scheduler completed',
+        results,
+        scheduled: results.filter(r => r.status === 'scheduled').length,
+        failed: results.filter(r => r.status === 'failed').length,
+      });
+    } catch (err: any) {
+      log(`scheduler run error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error running scheduler' });
+    }
+  });
+
+  // User: Update auto-arrangement preferences
+  app.post('/api/users/me/arrangement-preferences', async (req, res) => {
+    try {
+      const token = extractToken(req);
+      if (!token) return res.status(401).json({ message: 'not authenticated' });
+      if (!process.env.JWT_SECRET) return res.status(500).json({ message: 'authentication not configured' });
+      const payload = jwt.verify(token, process.env.JWT_SECRET) as any;
+      const userId = payload?.sub;
+      if (!userId) return res.status(401).json({ message: 'invalid token' });
+
+      const { arrangeMeetings, autoConfirm } = req.body;
+
+      const { error } = await supabase
+        .from('users_eif')
+        .update({
+          arrange_meetings: arrangeMeetings ?? false,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', userId);
+
+      if (error) throw error;
+
+      return res.json({ message: 'Preferences updated' });
+    } catch (err: any) {
+      log(`update preferences error: ${err?.message ?? String(err)}`, 'routes');
+      return res.status(500).json({ message: 'error updating preferences' });
+    }
+  });
+
+  function extractToken(req: any) {
+    const auth = req.headers?.authorization as string | undefined;
+    if (auth && auth.toLowerCase().startsWith('bearer ')) return auth.split(' ')[1];
+    const cookie = req.headers?.cookie as string | undefined;
+    if (cookie) {
+      const match = cookie.split(';').map(s => s.trim()).find(s => s.startsWith('token='));
+      if (match) return match.split('=')[1];
+    }
+    return null;
+  }
 
   return httpServer;
 }

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Search, Filter, MapPin, DollarSign, Briefcase, Calendar } from "lucide-react";
+import { useLocation } from 'wouter';
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState, useRef } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription, DialogClose } from "@/components/ui/dialog";
@@ -36,6 +37,7 @@ type Company = {
 };
 
 export default function InvestorDiscover() {
+    const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(false);
@@ -266,7 +268,7 @@ export default function InvestorDiscover() {
                     >
                       Request Meeting
                     </Button>
-                    <Button variant="ghost" size="icon" className="border border-white/10 text-muted-foreground hover:text-white" onClick={() => window.location.href = `/company/${id}`}>
+                    <Button variant="ghost" size="icon" className="border border-white/10 text-muted-foreground hover:text-white" onClick={() => setLocation(`/company/${id}`)}>
                       <Search className="w-4 h-4" />
                     </Button>
                   </CardFooter>
